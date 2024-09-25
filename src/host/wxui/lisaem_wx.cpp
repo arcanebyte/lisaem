@@ -10079,7 +10079,7 @@ extern "C" int pickprofilesize(char *filename, int allowexisting)
 
           check = dc42_auto_open(&P, filename, "");
           // if we failed to open, or it's not at least a 5MB dc42 image, alert and don't accept
-          if ((!check) || P.datasizetotal < (9728 * 512))
+          if ((check) || P.datasizetotal < (9728 * 512))
           {
             filename[0] = 0; // clear return file
             messagebox("The selected file is either not a proper DC42 image, or it's not a ProFile/Widget image.", "Sorry Not a Lisa Hard Disk Image");

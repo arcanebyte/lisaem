@@ -304,6 +304,10 @@ void switch_mouse_vector(void)
     lisa_os_mouse_x_ptr = 0x82e;
     lisa_os_mouse_y_ptr = 0x82c;
     break;
+  case 4:
+    lisa_os_mouse_x_ptr = 0x10ea;
+    lisa_os_mouse_y_ptr = 0x10ec;
+    break;
   }
 }
 
@@ -374,6 +378,18 @@ int check_running_lisa_os(void)
 
     return running_lisa_os;
   }
+  else
+    if ((v1 & 0x000ff000) == 0x000e2000 && (v2 & 0x000fff00) == 0x000e2a00)
+    {
+      // if (lisa_os_mouse_x_ptr!=0x00000fec) ALERT_LOG(0,"Mouse vector changed from %08x,%08x to fec",lisa_os_mouse_x_ptr,lisa_os_mouse_y_ptr);
+      lisa_os_mouse_x_ptr = 0x000010ea;
+      lisa_os_mouse_y_ptr = 0x000010ec;
+      running_lisa_os = LISA_MONITOR_RUNNING;
+      DEBUG_LOG(0, "Lisa Monitor v11 Running: v1=%08x v2=%08x", v1, v2);
+      if (monitor_patch)
+        apply_monitor_hle_patches();
+      return running_lisa_os;
+    }
   else                                                                          // 000ff000                          000fff00
     if (((v1 & 0x000ff000) == 0x000d5000 && (v2 & 0x000fff00) == 0x000e2500) || // Monitor OS (No mouse used)
         ((v1 & 0x00fff000) == 0x001c2000 && (v2 & 0x00ffff00) == 0x001c2500) || // this is a clue - address has changed!!!! maybe that's why LOS crashes!
@@ -384,7 +400,7 @@ int check_running_lisa_os(void)
       lisa_os_mouse_x_ptr = 0x00000fec;
       lisa_os_mouse_y_ptr = 0x000000fee;
       running_lisa_os = LISA_MONITOR_RUNNING;
-      DEBUG_LOG(0, "Lisa Monitor Running: v1=%08x v2=%08x", v1, v2);
+      DEBUG_LOG(0, "Lisa Monitor v12 Running: v1=%08x v2=%08x", v1, v2);
       if (monitor_patch)
         apply_monitor_hle_patches();
       return running_lisa_os;

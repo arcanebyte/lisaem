@@ -6,6 +6,9 @@ on:
   release:
     types: [ published ]
 
+permissions:
+  contents: write
+
 jobs:
   # Logic to determine if we use the Release Tag or the Commit ID as the produced build number
   setup:

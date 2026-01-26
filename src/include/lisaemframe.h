@@ -103,11 +103,18 @@ enum
 
 class LisaEmFrame : public wxFrame
 {
+private:
+    // Add this member variable:
+    wxPreferencesEditor* m_prefsEditor;
+
 public:
     int running; // is the Lisa running?  0=off, 1=running, 10=paused/locked.
 
     // Constructor
     LisaEmFrame(const wxString &title);
+
+    ~LisaEmFrame();  // Destructor
+    void OnPreferences(wxCommandEvent& event);
 
     void LoadImages(void);
     void UnloadImages(void);

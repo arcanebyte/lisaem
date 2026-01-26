@@ -117,3 +117,5 @@ extern "C"
 #ifndef MAXPATHLEN
 #define MAXPATHLEN 1024
 #endif
+
+#include <wx/preferences.h>

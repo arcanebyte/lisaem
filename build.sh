@@ -552,9 +552,13 @@ export  PHASE1LIST="\
 
 export  PHASE2INEXT=cpp PHASE2OUTEXT=o PHASE2OBJDIR=obj
 export  PHASE2LIST="\
-        src/host/wxui/lisaem_wx:src/include/vars.h:src/host/wxui/include/LisaConfig.h:src/host/wxui/include/LisaConfigFrame.h:src/host/wxui/include/LisaSkin.h:./src/printer/imagewriter/include/imagewriter-wx.h                                                  \
+        src/host/wxui/lisaem_wx:src/include/vars.h:src/host/wxui/include/LisaConfig.h:src/host/wxui/include/LisaConfigFrame.h:src/host/wxui/include/LisaSkin.h:./src/printer/imagewriter/include/imagewriter-wx.h:src/host/wxui/include/LisaPrefsGeneral.h:src/host/wxui/include/LisaPrefsDisplay.h:src/host/wxui/include/LisaPrefsPorts.h:src/host/wxui/include/LisaPrefsAdvanced.h \
         src/host/wxui/LisaConfig:src/host/wxui/include/LisaConfig.h \
         src/host/wxui/LisaConfigFrame:src/host/wxui/include/LisaConfigFrame.h \
+        src/host/wxui/LisaPrefsGeneral:src/host/wxui/include/LisaPrefsGeneral.h \
+        src/host/wxui/LisaPrefsDisplay:src/host/wxui/include/LisaPrefsDisplay.h \
+        src/host/wxui/LisaPrefsPorts:src/host/wxui/include/LisaPrefsPorts.h \
+        src/host/wxui/LisaPrefsAdvanced:src/host/wxui/include/LisaPrefsAdvanced.h \
         src/host/wxui/LisaSkin:src/host/wxui/include/LisaSkin.h \
         src/lisa/crt/hqx/hq3x-3x:src/lisa/crt/hqx/include/common.h:src/lisa/crt/hqx/include/hqx.h \
         src/printer/imagewriter/imagewriter-wx:./src/printer/imagewriter/include/imagewriter-wx.h \

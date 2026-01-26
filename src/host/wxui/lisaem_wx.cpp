@@ -179,6 +179,10 @@
 #include <wx/filename.h>
 #include <terminalwx.h>
 
+// Preferences
+#include <wx/preferences.h>
+#include "LisaPrefsGeneral.h"
+
 // RAW_BITMAP_ACCESS should be used in most cases as it proves much higher performance
 #ifdef NO_RAW_BITMAP_ACCESS
 #ifdef USE_RAW_BITMAP_ACCESS
@@ -699,6 +703,8 @@ enum
 
 class LisaEmFrame : public wxFrame
 {
+private:
+  wxPreferencesEditor* m_prefsEditor;  // ADD THIS LINE
 public:
   int running; // is the Lisa running?  0=off, 1=running, 10=paused/locked.
   int force_display_refresh;
@@ -9101,8 +9107,24 @@ LisaEmFrame::LisaEmFrame(const wxString& title)
 #endif
 
     update_menu_checkmarks();
+
+    // Initialize preferences editor
+    m_prefsEditor = new wxPreferencesEditor();
+    m_prefsEditor->AddPage(new LisaPrefsGeneral());
+    
+    // Bind menu event
+    Bind(wxEVT_MENU, &LisaEmFrame::OnPreferences, this, wxID_PREFERENCES);
 }
 
+LisaEmFrame::~LisaEmFrame()
+{
+    delete m_prefsEditor;
+}
+
+void LisaEmFrame::OnPreferences(wxCommandEvent& event)
+{
+    m_prefsEditor->Show(this);
+}
 
 void LisaEmFrame::OnFlushPrint(wxCommandEvent& WXUNUSED(event))  {
     iw_enddocuments();

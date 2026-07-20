@@ -1614,25 +1614,25 @@ void reg68k_ext_exec_various_dbug(void)
   case 0x00fe1d3e:
   {
     ALERT_LOG(0, "Return to ROM - Error 75");
-    debug_off();
+    // debug_off(); // intentionally left off: keep the DEBUG-build trace running past return-to-ROM
     return;
   }
   case 0x00fe0084:
   {
     ALERT_LOG(0, "Return to ROM");
-    debug_off();
+    // debug_off(); // intentionally left off: keep the DEBUG-build trace running past return-to-ROM
     return;
   }
   case 0x00fe1fde:
   {
     ALERT_LOG(0, "Return to ROM - PROERR");
-    debug_off();
+    // debug_off(); // intentionally left off: keep the DEBUG-build trace running past return-to-ROM
     return;
   }
   case 0x00fe1f3a:
   {
     ALERT_LOG(0, "Return to ROM - BOOTERR");
-    debug_off();
+    // debug_off(); // intentionally left off: keep the DEBUG-build trace running past return-to-ROM
     return;
   }
   case 0x00020000:

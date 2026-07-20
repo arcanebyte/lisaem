@@ -950,11 +950,11 @@ void LisaConfigFrame::OnPickDRom(wxCommandEvent &WXUNUSED(event))
 
 void LisaConfigFrame::OnPickProFile(wxCommandEvent &WXUNUSED(event))
 {
-    wxFileDialog open(this, wxT("Store ProFile drive as:"),
+    wxFileDialog open(this, wxT("Select ProFile drive image:"),
                       wxEmptyString,
                       wxT("lisaem-profile.dc42"),
                       wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
-                      (long int)wxFD_SAVE, wxDefaultPosition);
+                      (long int)wxFD_OPEN, wxDefaultPosition);
 
     if (open.ShowModal() == wxID_OK)
         m_propath->SetValue(open.GetPath());
@@ -964,22 +964,22 @@ void LisaConfigFrame::OnPickProFile(wxCommandEvent &WXUNUSED(event))
 
 void LisaConfigFrame::OnPickProFile1H(wxCommandEvent &WXUNUSED(event))
 {
-    wxFileDialog open(NULL, wxT("Create ProFile drive on upper port of Slot 1 as:"),
+    wxFileDialog open(NULL, wxT("Select ProFile image for Slot 1 upper port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s1h.dc42"),
                       wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
-                      wxFD_SAVE);
+                      wxFD_OPEN);
     if (open.ShowModal() == wxID_OK)
         m_text_propathh[1]->SetValue(open.GetPath());
 }
 
 void LisaConfigFrame::OnPickProFile1L(wxCommandEvent &WXUNUSED(event))
 {
-    wxFileDialog open(NULL, wxT("Create ProFile drive on lower port of Slot 1 as:"),
+    wxFileDialog open(NULL, wxT("Select ProFile image for Slot 1 lower port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s1l.dc42"),
                       wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
-                      wxFD_SAVE);
+                      wxFD_OPEN);
     if (open.ShowModal() == wxID_OK)
         m_text_propathl[1]->SetValue(open.GetPath());
 }
@@ -988,11 +988,11 @@ void LisaConfigFrame::OnPickProFile1L(wxCommandEvent &WXUNUSED(event))
 
 void LisaConfigFrame::OnPickProFile2H(wxCommandEvent &WXUNUSED(event))
 {
-    wxFileDialog open(NULL, wxT("Create ProFile drive on upper port of Slot 2 as:"),
+    wxFileDialog open(NULL, wxT("Select ProFile image for Slot 2 upper port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s2h.dc42"),
                       wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
-                      wxFD_SAVE);
+                      wxFD_OPEN);
 
     if (open.ShowModal() == wxID_OK)
         m_text_propathh[2]->SetValue(open.GetPath());
@@ -1000,11 +1000,11 @@ void LisaConfigFrame::OnPickProFile2H(wxCommandEvent &WXUNUSED(event))
 
 void LisaConfigFrame::OnPickProFile2L(wxCommandEvent &WXUNUSED(event))
 {
-    wxFileDialog open(NULL, wxT("Create ProFile drive on lower port of Slot 2 as:"),
+    wxFileDialog open(NULL, wxT("Select ProFile image for Slot 2 lower port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s2l.dc42"),
                       wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
-                      wxFD_SAVE);
+                      wxFD_OPEN);
 
     if (open.ShowModal() == wxID_OK)
         m_text_propathl[2]->SetValue(open.GetPath());
@@ -1013,11 +1013,11 @@ void LisaConfigFrame::OnPickProFile2L(wxCommandEvent &WXUNUSED(event))
 // slot 3
 void LisaConfigFrame::OnPickProFile3H(wxCommandEvent &WXUNUSED(event))
 {
-    wxFileDialog open(NULL, wxT("Create ProFile drive on upper port of Slot 3 as:"),
+    wxFileDialog open(NULL, wxT("Select ProFile image for Slot 3 upper port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s3h.dc42"),
                       wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
-                      wxFD_SAVE);
+                      wxFD_OPEN);
 
     if (open.ShowModal() == wxID_OK)
         m_text_propathh[3]->SetValue(open.GetPath());
@@ -1025,11 +1025,11 @@ void LisaConfigFrame::OnPickProFile3H(wxCommandEvent &WXUNUSED(event))
 
 void LisaConfigFrame::OnPickProFile3L(wxCommandEvent &WXUNUSED(event))
 {
-    wxFileDialog open(NULL, wxT("Create ProFile drive on lower port of Slot 3 as:"),
+    wxFileDialog open(NULL, wxT("Select ProFile image for Slot 3 lower port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s3l.dc42"),
                       wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
-                      wxFD_SAVE);
+                      wxFD_OPEN);
 
     if (open.ShowModal() == wxID_OK)
         m_text_propathl[3]->SetValue(open.GetPath());

@@ -149,6 +149,7 @@
 
 #include <wx/wx.h>
 #include <wx/defs.h>
+#include <wx/sysopt.h> // for wxSystemOptions (macOS Open-dialog file-type filter menu)
 #include <wx/image.h>
 #include <wx/icon.h>
 #include <wx/dcbuffer.h>
@@ -3201,6 +3202,12 @@ bool LisaEmApp::OnInit()
 {
     if (!wxApp::OnInit())
       return false; // call default behaviour (mandatory)
+
+#ifdef __WXOSX__
+    // macOS hides the file-type filter dropdown in Open dialogs by default; this makes wx show it
+    // (so the .dc42 / .image / All-files wildcard menu appears), matching Windows/GTK behaviour.
+    wxSystemOptions::SetOption(wxOSX_FILEDIALOG_ALWAYS_SHOW_TYPES, 1);
+#endif
 
     // Normally, if you type anything in the terminal window from where you
     // launched LisaEm, LisaEm will freeze and your only option is to restart it.

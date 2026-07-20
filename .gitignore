@@ -77,3 +77,16 @@ src/tools/include/machine.h
 src/lib/libdc42/include/machine.h
 hashes.txt
 output.txt
+
+# --- generated build artifacts (rules above are root-anchored and miss the nested copies) ---
+wxWidgets-*/
+/bin/[0-9]*/
+obj/build-warnings.txt
+**/built_by.h
+src/**/include/machine.h
+**/cpu68k/cpu68k-?.c
+**/def68k-*.h
+**/cpu68k/def68k
+**/cpu68k/gen68k
+**/obj/def68k
+**/obj/gen68k

@@ -1930,6 +1930,30 @@ int dc42_extract_macbinii(char *infilename)
 }
 
 // opens a DC42 image automatically converting it from DART, and/or stripping MacBinII headers if needed
+// Identify what kind of Lisa disk a file holds (for the Preferences file pickers). Opens read-only,
+// inspects tags/geometry, closes. Returns DC42_KIND_PROFILE / DC42_KIND_FLOPPY / DC42_KIND_RAW.
+int dc42_classify_image(char *filename)
+{
+    if (!filename || !*filename)
+        return DC42_KIND_RAW;
+
+    DC42ImageType F;
+    memset(&F, 0, sizeof(F));
+
+    // Always trust the dc42/DART header: tagsize 20 (or > 1742 blocks) is ProFile/Widget, 12 is floppy.
+    // If it isn't a recognizable dc42/DART image, we don't guess from size - report it as raw.
+    //
+    // Options "rn" = read-only, no mmap. Read-only so close_image() can't rewrite the image (it does
+    // recalc_checksums + sync_to_disk on close); no-mmap because a PROT_WRITE mmap on a read-only fd
+    // fails on macOS (returns -99). tags/geometry are parsed from the header regardless of mmap mode.
+    int rc = dc42_auto_open(&F, filename, "rn"); // read-only header inspection (also handles DART)
+    int kind = (rc != 0) ? DC42_KIND_RAW
+                         : ((F.tagsize == 20 || F.numblocks > 1742) ? DC42_KIND_PROFILE : DC42_KIND_FLOPPY);
+    if (F.close_image)
+        F.close_image(&F);
+    return kind;
+}
+
 int dc42_auto_open(DC42ImageType *F, char *infilename, char *options)
 {
    int i = 0;

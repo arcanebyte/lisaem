@@ -405,6 +405,15 @@ int dart_to_dc42(char *dartfilename, char *dc42filename); // converts a DART fas
 
 int dc42_is_valid_image(char *filename); // returns 0 if it can't open the image, or the image is not a valid dc42 image.
 
+// dc42_classify_image() - identify what kind of Lisa disk a file holds, for the Preferences file pickers.
+// Classified from the dc42/DART header only (no size guessing): tagsize 20 = ProFile/Widget, 12 = floppy;
+// a Lisa floppy is <= 1742 blocks. Anything not a recognizable dc42/DART image is reported as raw (the
+// caller may allow it but should say the format couldn't be identified). Returns one of:
+#define DC42_KIND_RAW 0     // not a recognizable dc42/DART image (e.g. a raw .image, or empty/unreadable)
+#define DC42_KIND_PROFILE 1 // dc42 ProFile/Widget hard disk (tagsize 20, or > 1742 blocks)
+#define DC42_KIND_FLOPPY 2  // dc42 floppy (tagsize 12 / <= 1742 blocks)
+int dc42_classify_image(char *filename);
+
 int dart_is_valid_image(char *dartfilename); // returns 0 if it can't open the image, or the image is not a valid DART image
 
 int dc42_is_valid_macbinii(char *infilename, char *creatortype); // returns 1 if file is macbinII encapsulated

@@ -1019,16 +1019,43 @@ void LisaConfigFrame::OnPickDRom(wxCommandEvent &WXUNUSED(event))
         m_dprompath->SetValue(x.GetPath());
 }
 
+// Reject a floppy dc42 chosen for a ProFile slot. Raw/unknown (.image) is allowed here; the
+// "unable to identify disk format" note is shown later at mount time. Defined in libdc42 (DC42_KIND_FLOPPY==2).
+extern "C" int dc42_classify_image(char *filename);
+
+static void set_profile_path_checked(wxTextCtrl *target, const wxString &path)
+{
+    int kind = dc42_classify_image((char *)(const char *)path.mb_str());
+    if (kind == 2) // DC42_KIND_FLOPPY - a dc42 floppy is the wrong type for a ProFile slot: reject
+    {
+        wxMessageDialog(NULL,
+                        _T("That's a floppy disk image, not a ProFile.\n\nPlease choose a ProFile image (or a raw image)."),
+                        _T("Wrong image type for a ProFile slot"),
+                        wxOK | wxICON_EXCLAMATION)
+            .ShowModal();
+        return; // leave the field unchanged
+    }
+    if (kind == 0) // DC42_KIND_RAW - not a recognizable dc42; allow it, but say the format is unknown
+    {
+        wxMessageDialog(NULL,
+                        _T("Unable to identify disk format. It will be used as-is."),
+                        _T("Unrecognized disk image"),
+                        wxOK | wxICON_INFORMATION)
+            .ShowModal();
+    }
+    target->SetValue(path);
+}
+
 void LisaConfigFrame::OnPickProFile(wxCommandEvent &WXUNUSED(event))
 {
     wxFileDialog open(this, wxT("Select ProFile drive image:"),
                       wxEmptyString,
                       wxT("lisaem-profile.dc42"),
-                      wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
+                      wxT("Disk image (*.dc42)|*.dc42|Raw image (*.image)|*.image|All files (*.*)|*.*"),
                       (long int)wxFD_OPEN, wxDefaultPosition);
 
     if (open.ShowModal() == wxID_OK)
-        m_propath->SetValue(open.GetPath());
+        set_profile_path_checked(m_propath, open.GetPath());
 }
 
 // slot 1
@@ -1038,10 +1065,10 @@ void LisaConfigFrame::OnPickProFile1H(wxCommandEvent &WXUNUSED(event))
     wxFileDialog open(NULL, wxT("Select ProFile image for Slot 1 upper port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s1h.dc42"),
-                      wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
+                      wxT("Disk image (*.dc42)|*.dc42|Raw image (*.image)|*.image|All files (*.*)|*.*"),
                       wxFD_OPEN);
     if (open.ShowModal() == wxID_OK)
-        m_text_propathh[1]->SetValue(open.GetPath());
+        set_profile_path_checked(m_text_propathh[1], open.GetPath());
 }
 
 void LisaConfigFrame::OnPickProFile1L(wxCommandEvent &WXUNUSED(event))
@@ -1049,10 +1076,10 @@ void LisaConfigFrame::OnPickProFile1L(wxCommandEvent &WXUNUSED(event))
     wxFileDialog open(NULL, wxT("Select ProFile image for Slot 1 lower port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s1l.dc42"),
-                      wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
+                      wxT("Disk image (*.dc42)|*.dc42|Raw image (*.image)|*.image|All files (*.*)|*.*"),
                       wxFD_OPEN);
     if (open.ShowModal() == wxID_OK)
-        m_text_propathl[1]->SetValue(open.GetPath());
+        set_profile_path_checked(m_text_propathl[1], open.GetPath());
 }
 
 // slot 2
@@ -1062,11 +1089,11 @@ void LisaConfigFrame::OnPickProFile2H(wxCommandEvent &WXUNUSED(event))
     wxFileDialog open(NULL, wxT("Select ProFile image for Slot 2 upper port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s2h.dc42"),
-                      wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
+                      wxT("Disk image (*.dc42)|*.dc42|Raw image (*.image)|*.image|All files (*.*)|*.*"),
                       wxFD_OPEN);
 
     if (open.ShowModal() == wxID_OK)
-        m_text_propathh[2]->SetValue(open.GetPath());
+        set_profile_path_checked(m_text_propathh[2], open.GetPath());
 }
 
 void LisaConfigFrame::OnPickProFile2L(wxCommandEvent &WXUNUSED(event))
@@ -1074,11 +1101,11 @@ void LisaConfigFrame::OnPickProFile2L(wxCommandEvent &WXUNUSED(event))
     wxFileDialog open(NULL, wxT("Select ProFile image for Slot 2 lower port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s2l.dc42"),
-                      wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
+                      wxT("Disk image (*.dc42)|*.dc42|Raw image (*.image)|*.image|All files (*.*)|*.*"),
                       wxFD_OPEN);
 
     if (open.ShowModal() == wxID_OK)
-        m_text_propathl[2]->SetValue(open.GetPath());
+        set_profile_path_checked(m_text_propathl[2], open.GetPath());
 }
 
 // slot 3
@@ -1087,11 +1114,11 @@ void LisaConfigFrame::OnPickProFile3H(wxCommandEvent &WXUNUSED(event))
     wxFileDialog open(NULL, wxT("Select ProFile image for Slot 3 upper port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s3h.dc42"),
-                      wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
+                      wxT("Disk image (*.dc42)|*.dc42|Raw image (*.image)|*.image|All files (*.*)|*.*"),
                       wxFD_OPEN);
 
     if (open.ShowModal() == wxID_OK)
-        m_text_propathh[3]->SetValue(open.GetPath());
+        set_profile_path_checked(m_text_propathh[3], open.GetPath());
 }
 
 void LisaConfigFrame::OnPickProFile3L(wxCommandEvent &WXUNUSED(event))
@@ -1099,11 +1126,11 @@ void LisaConfigFrame::OnPickProFile3L(wxCommandEvent &WXUNUSED(event))
     wxFileDialog open(NULL, wxT("Select ProFile image for Slot 3 lower port:"),
                       wxEmptyString,
                       wxT("lisaem-profile-s3l.dc42"),
-                      wxT("Disk Image (*.dc42;*.image)|*.dc42;*.image|All (*.*)|*.*"),
+                      wxT("Disk image (*.dc42)|*.dc42|Raw image (*.image)|*.image|All files (*.*)|*.*"),
                       wxFD_OPEN);
 
     if (open.ShowModal() == wxID_OK)
-        m_text_propathl[3]->SetValue(open.GetPath());
+        set_profile_path_checked(m_text_propathl[3], open.GetPath());
 }
 
 void LisaConfigFrame::OnPickIWDir(wxCommandEvent &WXUNUSED(event))

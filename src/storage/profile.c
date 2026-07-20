@@ -686,17 +686,8 @@ int profile_mount(char *filename, ProFileType *P)
         // Now open it as a raw profile image file.
         // Note: there is no way to validate here if the file is a valid raw profile image file. It if boots up, then it is.
         ALERT_LOG(0, "dc42_open() of file name %s returned error %d, the error message is:%s. Now will open the file in raw profile format ...", filename, i, P->DC42.errormsg);
-        if (file_name_len > 6 && strcasecmp(filename + file_name_len - 6, ".image") != 0)
-        {
-            char message[1024];
-            // If the file extension is not .image, warn the user that ha may be doing something wrong.
-            snprintf(message, sizeof(message),
-                     "The Profile image file '%s' is not a valid dc42 image file. Will attempt to open it as a raw profile image file, "
-                     "even though its extension is not recognized (is not .image).\n\nTo avoid this warning in the future, "
-                     "please rename the file to have a '.image' extension and then update its name in File->Preferences, tab 'ports'.",
-                     filename);
-            messagebox(message, "Warning: unrecognized file name extension");
-        }   
+        (void)file_name_len;
+        messagebox("Unable to identify disk format. Attempting to use the disk image.", "Raw disk image");
 
 #ifndef __MSVCRT__
         i = raw_profile_image_open(&P->DC42, filename, "wb");

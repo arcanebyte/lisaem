@@ -9426,6 +9426,9 @@ extern "C" void update_profile_preferences_path(char *newfilename) {
 
 
 // Connects a printer/profile to the specified VIA - 2021.08.24 added profile_prefs_path to save the preferences it came from.
+// reachable power-state check for other translation units (e.g. LisaConfigFrame.cpp, which can't see my_lisaframe)
+extern "C" int lisa_is_powered_on(void) { return (my_lisaframe && my_lisaframe->running) ? 1 : 0; }
+
 void connect_device_to_via(int v, wxString device, wxString *file, wxString profile_prefs_path)
 {
     char tmp[MAXPATHLEN];
@@ -9468,6 +9471,8 @@ void connect_device_to_via(int v, wxString device, wxString *file, wxString prof
       ALERT_LOG(0, "Attempting to attach VIA#%d to profile %s", v, tmp);
       if (!via[v].ProFile)
         via[v].ProFile = (ProFileType *)calloc(1, sizeof(ProFileType)); // valgrind reports leak here, but it's ok, just not freed before exit
+      else if ((&via[v].ProFile->DC42)->close_image)                    // re-attaching an already-mounted slot: close the old
+        (&via[v].ProFile->DC42)->close_image(&via[v].ProFile->DC42);    // image first, else dc42_open leaks its fd + MAP_SHARED mmap
 
       int i = profile_mount(tmp, via[v].ProFile);
       if (i)

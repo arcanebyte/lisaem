@@ -344,9 +344,20 @@ void LisaConfigFrame::OnZapPram(wxCommandEvent &WXUNUSED(event))
     memset(&floppy_ram[0x180 / 2], 0, (0x200 - 0x180) / 2);
 }
 
+// mount a (possibly changed) ProFile/printer to a VIA, and check power state - both defined in lisaem_wx.cpp
+extern void connect_device_to_via(int v, wxString device, wxString *file, wxString profile_prefs_path);
+extern "C" int lisa_is_powered_on(void);
+
 void LisaConfigFrame::OnApply(wxCommandEvent &WXUNUSED(event))
 {
     // JD - Consider initating a restart of the application here if the ROM file changes.
+
+    // Snapshot current ProFile image paths so we can hot-swap any that change (see end of function).
+    // A disk-image change should behave like swapping a real drive: take effect immediately, no reset.
+    wxString old_pp   = my_lisaconfig->parallelp;
+    wxString old_s1hp = my_lisaconfig->s1hp, old_s1lp = my_lisaconfig->s1lp;
+    wxString old_s2hp = my_lisaconfig->s2hp, old_s2lp = my_lisaconfig->s2lp;
+    wxString old_s3hp = my_lisaconfig->s3hp, old_s3lp = my_lisaconfig->s3lp;
 
     // --- configuration page ----------------------------------------------
 
@@ -382,6 +393,22 @@ void LisaConfigFrame::OnApply(wxCommandEvent &WXUNUSED(event))
         return;
     if (!m_text_propathl[3])
         return;
+
+    // If a disk image is being changed while the Lisa is powered on, warn first: the hot-swap below
+    // takes effect immediately, which is fine at the ROM boot menu but can misbehave under a live OS.
+    if (lisa_is_powered_on() &&
+        (!old_pp.IsSameAs(m_propath->GetValue()) ||
+         !old_s1hp.IsSameAs(m_text_propathh[1]->GetValue()) || !old_s1lp.IsSameAs(m_text_propathl[1]->GetValue()) ||
+         !old_s2hp.IsSameAs(m_text_propathh[2]->GetValue()) || !old_s2lp.IsSameAs(m_text_propathl[2]->GetValue()) ||
+         !old_s3hp.IsSameAs(m_text_propathh[3]->GetValue()) || !old_s3lp.IsSameAs(m_text_propathl[3]->GetValue())))
+    {
+        wxMessageDialog warn(this,
+                             _T("Changing the disk image without powering off the Lisa may result in unpredictable behavior.\n\nContinue?"),
+                             _T("Disk image changed while powered on"),
+                             wxYES_NO | wxNO_DEFAULT | wxICON_EXCLAMATION);
+        if (warn.ShowModal() != wxID_YES)
+            return; // user backed out - change nothing
+    }
 
     my_lisaconfig->myserial = serialtxt->GetValue();
     my_lisaconfig->rompath = m_rompath->GetValue();
@@ -518,6 +545,50 @@ void LisaConfigFrame::OnApply(wxCommandEvent &WXUNUSED(event))
     my_lisaconfig->iw_png_path = iw_img_path->GetValue();
 
     save_configs();
+
+#ifdef DEBUG
+    // Debug build only: dump the ProFile hot-swap decision (old -> new path, and whether the new
+    // file exists) on every Apply. Raw stderr so it prints regardless of the runtime debug-log state.
+    fprintf(stderr,
+            "LisaEm hot-swap check:\n"
+            "  pp : '%s' -> '%s' exists=%d\n"
+            "  s1h: '%s' -> '%s' exists=%d\n"
+            "  s1l: '%s' -> '%s' exists=%d\n"
+            "  s2h: '%s' -> '%s' exists=%d\n"
+            "  s2l: '%s' -> '%s' exists=%d\n"
+            "  s3h: '%s' -> '%s' exists=%d\n"
+            "  s3l: '%s' -> '%s' exists=%d\n",
+            (const char *)old_pp.mb_str(),   (const char *)my_lisaconfig->parallelp.mb_str(), (int)wxFileExists(my_lisaconfig->parallelp),
+            (const char *)old_s1hp.mb_str(), (const char *)my_lisaconfig->s1hp.mb_str(),       (int)wxFileExists(my_lisaconfig->s1hp),
+            (const char *)old_s1lp.mb_str(), (const char *)my_lisaconfig->s1lp.mb_str(),       (int)wxFileExists(my_lisaconfig->s1lp),
+            (const char *)old_s2hp.mb_str(), (const char *)my_lisaconfig->s2hp.mb_str(),       (int)wxFileExists(my_lisaconfig->s2hp),
+            (const char *)old_s2lp.mb_str(), (const char *)my_lisaconfig->s2lp.mb_str(),       (int)wxFileExists(my_lisaconfig->s2lp),
+            (const char *)old_s3hp.mb_str(), (const char *)my_lisaconfig->s3hp.mb_str(),       (int)wxFileExists(my_lisaconfig->s3hp),
+            (const char *)old_s3lp.mb_str(), (const char *)my_lisaconfig->s3lp.mb_str(),       (int)wxFileExists(my_lisaconfig->s3lp));
+    fflush(stderr);
+#endif
+
+    // Hot-swap any ProFile image whose path changed AND actually exists on disk: unmount the old
+    // image and mount the new one right now, mimicking a real drive swap. The running ROM then boots
+    // the new disk on its next "Startup from" without a reset/power-cycle. connect_device_to_via()
+    // closes the old image first (no fd/mmap leak) and calls ProfileReset(); it is a no-op for
+    // non-PROFILE devices. The wxFileExists() guard keeps a live swap from popping profile_mount's
+    // "create a new hard disk?" (size-picker) dialog when a path points at a not-yet-created image.
+    if (!old_pp.IsSameAs(my_lisaconfig->parallelp) && wxFileExists(my_lisaconfig->parallelp))
+        connect_device_to_via(2, my_lisaconfig->parallel, &my_lisaconfig->parallelp, "/parallelport/path");
+    if (!old_s1hp.IsSameAs(my_lisaconfig->s1hp) && wxFileExists(my_lisaconfig->s1hp))
+        connect_device_to_via(3, my_lisaconfig->s1h, &my_lisaconfig->s1hp, "/cardslot1/highpath");
+    if (!old_s1lp.IsSameAs(my_lisaconfig->s1lp) && wxFileExists(my_lisaconfig->s1lp))
+        connect_device_to_via(4, my_lisaconfig->s1l, &my_lisaconfig->s1lp, "/cardslot1/lowpath");
+    if (!old_s2hp.IsSameAs(my_lisaconfig->s2hp) && wxFileExists(my_lisaconfig->s2hp))
+        connect_device_to_via(5, my_lisaconfig->s2h, &my_lisaconfig->s2hp, "/cardslot2/highpath");
+    if (!old_s2lp.IsSameAs(my_lisaconfig->s2lp) && wxFileExists(my_lisaconfig->s2lp))
+        connect_device_to_via(6, my_lisaconfig->s2l, &my_lisaconfig->s2lp, "/cardslot2/lowpath");
+    if (!old_s3hp.IsSameAs(my_lisaconfig->s3hp) && wxFileExists(my_lisaconfig->s3hp))
+        connect_device_to_via(7, my_lisaconfig->s3h, &my_lisaconfig->s3hp, "/cardslot3/highpath");
+    if (!old_s3lp.IsSameAs(my_lisaconfig->s3lp) && wxFileExists(my_lisaconfig->s3lp))
+        connect_device_to_via(8, my_lisaconfig->s3l, &my_lisaconfig->s3lp, "/cardslot3/lowpath");
+
     Close();
 }
 

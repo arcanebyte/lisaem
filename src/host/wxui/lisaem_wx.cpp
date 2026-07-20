@@ -6046,8 +6046,8 @@ void LisaWin::OnPaint(wxPaintEvent& event )
 
     //  screen_paint_update++;
 
-    if (!my_lisaframe || !my_lisawin)
-      return; // not fully running yet, return so we don't crash
+    if (!my_lisaframe || !my_lisawin || !my_memDC)
+      return; // not fully running yet, or torn down during quit (OnQuit EXTERMINATEs my_memDC) - don't crash
 
     if (!my_lisaframe->running)
       repaintall |= REPAINT_INVALID_WINDOW;

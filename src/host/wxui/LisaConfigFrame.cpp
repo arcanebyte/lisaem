@@ -98,8 +98,13 @@ BEGIN_EVENT_TABLE(LisaConfigFrame, wxDialog)
 EVT_NOTEBOOK_PAGE_CHANGED(ID_NOTEBOOK, LisaConfigFrame::OnNoteBook)
 EVT_NOTEBOOK_PAGE_CHANGING(ID_NOTEBOOK, LisaConfigFrame::OnNoteBook)
 EVT_BUTTON(ID_SERNO_INFO, LisaConfigFrame::OnSernoInfo)
-EVT_BUTTON(ID_APPLY, LisaConfigFrame::OnApply)
-EVT_BUTTON(wxID_OK, LisaConfigFrame::OnApply) // dialog OK = apply & close
+EVT_BUTTON(wxID_APPLY, LisaConfigFrame::OnApply)  // dialog Apply: commit, stay open
+EVT_BUTTON(wxID_OK, LisaConfigFrame::OnOK)        // dialog OK: commit & close
+// any edit to a control marks the config dirty and re-enables Apply
+EVT_TEXT(wxID_ANY, LisaConfigFrame::OnControlChanged)
+EVT_CHECKBOX(wxID_ANY, LisaConfigFrame::OnControlChanged)
+EVT_CHOICE(wxID_ANY, LisaConfigFrame::OnControlChanged)
+EVT_RADIOBOX(wxID_ANY, LisaConfigFrame::OnControlChanged)
 EVT_BUTTON(ID_ZAP_PRAM, LisaConfigFrame::OnZapPram)
 EVT_BUTTON(ID_SAVE_PRAM, LisaConfigFrame::OnSavePram)
 EVT_BUTTON(ID_LOAD_PRAM, LisaConfigFrame::OnLoadPram)
@@ -173,13 +178,20 @@ LisaConfigFrame::LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig)
         new wxNotebook(this, ID_NOTEBOOK, wxDefaultPosition, wxSize(550, 650));
     CreateNotebook(thenoteBook);
 
+    // Keep the notebook big enough for the pages still using absolute layout
+    // (Ports/Slots/Printer) until they are converted to sizers too.
+    thenoteBook->SetMinSize(wxSize(550 * HIDPISCALE, 650 * HIDPISCALE));
+
     // Stage 1: wrap the notebook + a native OK/Cancel button bar so this is a proper modal dialog.
     wxBoxSizer *topsizer = new wxBoxSizer(wxVERTICAL);
     topsizer->Add(thenoteBook, 1, wxEXPAND | wxALL, 6);
-    wxSizer *btnsizer = CreateButtonSizer(wxOK | wxCANCEL);
+    wxSizer *btnsizer = CreateButtonSizer(wxOK | wxCANCEL | wxAPPLY);
     if (btnsizer)
         topsizer->Add(btnsizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
     SetSizerAndFit(topsizer);
+
+    // Nothing edited yet: Apply stays dim until the user changes a value.
+    SetApplyEnabled(false);
 }
 
 void LisaConfigFrame::OnNoteBook(wxNotebookEvent &WXUNUSED(event))
@@ -248,7 +260,6 @@ void LisaConfigFrame::OnSernoInfo(wxCommandEvent &WXUNUSED(event))
 
 void LisaConfigFrame::OnSavePram(wxCommandEvent &WXUNUSED(event))
 {
-    char *filename;
     FILE *F;
 
     wxFileDialog x(NULL, wxT("Save the Lisa PRAM to a file"),
@@ -257,12 +268,15 @@ void LisaConfigFrame::OnSavePram(wxCommandEvent &WXUNUSED(event))
                    wxT("PRAM (*.pram)|*.pram|All (*.*)|*.*"),
                    (long int)wxFD_SAVE | wxFD_OVERWRITE_PROMPT, wxDefaultPosition);
 
-    if (x.ShowModal() == wxID_OK)
-        filename = (char *)(const char *)(x.GetPath().c_str());
-    else
+    if (x.ShowModal() != wxID_OK)
         return;
+    // Keep the path in a named wxString: c_str() on the temporary GetPath()
+    // returns a buffer that is freed at the end of the statement, so the old
+    // code handed fopen() a dangling pointer.
+    wxString path = x.GetPath();
+
     errno = 0;
-    F = fopen(filename, "wb");
+    F = fopen((const char *)path.mb_str(), "wb");
     if (!F)
     {
         wxMessageBox(_T("Could not open the PRAM file for writing."), _T("File Error!"), wxICON_INFORMATION | wxOK);
@@ -281,7 +295,6 @@ void LisaConfigFrame::OnSavePram(wxCommandEvent &WXUNUSED(event))
 
 void LisaConfigFrame::OnLoadPram(wxCommandEvent &WXUNUSED(event))
 {
-    char *filename;
     FILE *F;
     int count = 0;
     uint8 backup[(0x200 - 0x180) / 2];
@@ -307,14 +320,13 @@ void LisaConfigFrame::OnLoadPram(wxCommandEvent &WXUNUSED(event))
                    wxT("PRAM (*.pram)|*.pram|All (*.*)|*.*"),
                    (long int)wxFD_OPEN | wxFD_FILE_MUST_EXIST, wxDefaultPosition);
 
-    if (x.ShowModal() == wxID_OK)
-        filename = (char *)(const char *)(x.GetPath().c_str());
-    else
+    if (x.ShowModal() != wxID_OK)
         return;
+    wxString path = x.GetPath(); // named string; GetPath().c_str() would dangle (see OnSavePram)
 
     memcpy(backup, &floppy_ram[0x180 / 2], (0x200 - 0x180) / 2); // make a backup
     errno = 0;
-    F = fopen(filename, "rb");
+    F = fopen((const char *)path.mb_str(), "rb");
     if (!F)
     {
         wxMessageBox(_T("Could not open the PRAM file for reading."), _T("File Error!"), wxICON_INFORMATION | wxOK);
@@ -355,7 +367,33 @@ void LisaConfigFrame::OnZapPram(wxCommandEvent &WXUNUSED(event))
 extern void connect_device_to_via(int v, wxString device, wxString *file, wxString profile_prefs_path);
 extern "C" int lisa_is_powered_on(void);
 
+void LisaConfigFrame::SetApplyEnabled(bool enabled)
+{
+    // The Apply button is created by CreateButtonSizer(); look it up by id.
+    wxWindow *b = FindWindow(wxID_APPLY);
+    if (b)
+        b->Enable(enabled);
+}
+
+void LisaConfigFrame::OnControlChanged(wxCommandEvent &event)
+{
+    SetApplyEnabled(true); // a value changed -> there's now something to apply
+    event.Skip();          // let the control's normal processing continue
+}
+
 void LisaConfigFrame::OnApply(wxCommandEvent &WXUNUSED(event))
+{
+    ApplyChanges();
+    SetApplyEnabled(false); // committed; nothing left to apply until the next edit
+}
+
+void LisaConfigFrame::OnOK(wxCommandEvent &WXUNUSED(event))
+{
+    ApplyChanges();
+    EndModal(wxID_OK);
+}
+
+void LisaConfigFrame::ApplyChanges()
 {
     // JD - Consider initating a restart of the application here if the ROM file changes.
 
@@ -595,8 +633,6 @@ void LisaConfigFrame::OnApply(wxCommandEvent &WXUNUSED(event))
         connect_device_to_via(7, my_lisaconfig->s3h, &my_lisaconfig->s3hp, "/cardslot3/highpath");
     if (!old_s3lp.IsSameAs(my_lisaconfig->s3lp) && wxFileExists(my_lisaconfig->s3lp))
         connect_device_to_via(8, my_lisaconfig->s3l, &my_lisaconfig->s3lp, "/cardslot3/lowpath");
-
-    EndModal(wxID_OK); // apply & close the modal dialog
 }
 
 wxPanel *LisaConfigFrame::CreateSlotConfigPage(wxNotebook *parent, int slot)
@@ -687,7 +723,6 @@ wxPanel *LisaConfigFrame::CreateSlotConfigPage(wxNotebook *parent, int slot)
     // idth - upper text field idbh - button upper
     // using wxID_ANY for lower for some reason(why?), idbl - button lower line ~493
 
-    (void)new wxButton(panel, ID_APPLY, wxT("Apply"), applypoint, wxDefaultSize);
 
     return panel;
 }
@@ -695,148 +730,151 @@ wxPanel *LisaConfigFrame::CreateSlotConfigPage(wxNotebook *parent, int slot)
 wxPanel *LisaConfigFrame::CreateMainConfigPage(wxNotebook *parent)
 {
     wxPanel *panel = new wxPanel(parent);
+    wxBoxSizer *page = new wxBoxSizer(wxVERTICAL);
 
-    int y = 10 * HIDPISCALE, ya = 50 * HIDPISCALE;
+    const int B = 6 * HIDPISCALE; // common border
 
-    // Tell the user what config file we're using.
-    wxString t;
-    t = _T("Prefs file: ") + get_config_filename();
+    // ---- Memory --------------------------------------------------------
+    {
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxHORIZONTAL, panel, _T("Memory"));
 
-    (void)new wxStaticText(panel, wxID_ANY, t, wxPoint(10 * HIDPISCALE, y), wxSize(500 * HIDPISCALE, 30 * HIDPISCALE));
-    y += ya / 2; // y+=ya/2;
-
-    wxString ramsize[] = {wxT("0.5 MB"), wxT("1 MB"), wxT("1.5 MB"), wxT("2 MB*")};
-
-    cpurambox = new wxRadioBox(panel, wxID_ANY, wxT("RAM:"), wxPoint(10 * HIDPISCALE, y), wxDefaultSize,
+        wxString ramsize[] = {wxT("0.5 MB"), wxT("1 MB"), wxT("1.5 MB"), wxT("2 MB")};
+        cpurambox = new wxRadioBox(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize,
 #ifdef ALLOW2MBRAM
-                               4, // 3 to turn off 2mb// 4 - to -reneable 2MB, uncomment case 2048 below as well
+                                   4, // 3 to turn off 2mb / 4 to re-enable 2MB (also uncomment case 2048 below)
 #else
-                               3,
+                                   3,
 #endif
-                               ramsize, 0, wxRA_SPECIFY_COLS,
-                               wxDefaultValidator, wxT("radioBox"));
-
-    switch (my_lisaconfig->mymaxlisaram)
-    {
-    case 512:
-        cpurambox->SetSelection(0);
-        break;
-    case 1024:
-        cpurambox->SetSelection(1);
-        break;
-    case 1536:
-        cpurambox->SetSelection(2);
-        break;
+                                   ramsize, 0, wxRA_SPECIFY_COLS);
+        switch (my_lisaconfig->mymaxlisaram)
+        {
+        case 512:  cpurambox->SetSelection(0); break;
+        case 1024: cpurambox->SetSelection(1); break;
+        case 1536: cpurambox->SetSelection(2); break;
 #ifdef ALLOW2MBRAM
-    case 2048:
-        cpurambox->SetSelection(3);
-        break;
+        case 2048: cpurambox->SetSelection(3); break;
 #endif
-    default:
-        cpurambox->SetSelection(2);
+        default:   cpurambox->SetSelection(2);
+        }
+        g->Add(cpurambox, 0, wxALL, B);
+        page->Add(g, 0, wxEXPAND | wxALL, B);
     }
 
-    // doesn't work yet
-    // macwx4mb = new wxCheckBox(panel, wxID_ANY, wxT("4MB RAM MacWorks"), wxPoint(320 * HIDPISCALE,y+(ya/4)), wxDefaultSize,wxCHK_2STATE);
-    // macwx4mb->SetValue( (bool)(macworks4mb) );
-
-    y += ya;
-    y += ya / 2;
-
-    (void)new wxStaticText(panel, wxID_ANY, _T("Lisa Serial Number:"), wxPoint(10 * HIDPISCALE, y), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE));
-    y += (ya / 2);
-
-    (void)new wxButton(panel, ID_SERNO_INFO, wxT("info"), wxPoint(420 * HIDPISCALE, y), wxDefaultSize);
-
-    serialtxt = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->myserial, wxPoint(10 * HIDPISCALE, y), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE), 0);
-    y += ya;
-
-    (void)new wxStaticText(panel, wxID_ANY, _T("Lisa ROM:"), wxPoint(10 * HIDPISCALE, y), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE));
-    y += (ya / 2);
-    m_rompath = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->rompath, wxPoint(10 * HIDPISCALE, y), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE), 0);
-    b_rompath = new wxButton(panel, ID_PICK_ROM, wxT("browse"), wxPoint(420 * HIDPISCALE, y), wxDefaultSize);
-    y += ya;
-    (void)new wxStaticText(panel, wxID_ANY, _T("NOTE: Setting Lisa ROM location requires a restart of the application."), wxPoint(7 * HIDPISCALE, y), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE));
-    y += ya;
-
-    (void)new wxStaticText(panel, wxID_ANY, _T("Dual Parallel Card ROM:"), wxPoint(10, y), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE));
-    y += (ya / 2);
-    m_dprompath = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->dualrom, wxPoint(10, y), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE), 0);
-    b_dprompath = new wxButton(panel, ID_PICK_DPROM, wxT("browse"), wxPoint(420, y), wxDefaultSize);
-    y += ya;
-
-    wxString kbid[] = {wxT("US"), wxT("UK"), wxT("FR"), wxT("DE")};
-    kbbox = new wxRadioBox(panel, wxID_ANY, wxT("Keyboard:"), wxPoint(10, y), wxDefaultSize, 4, kbid, 0, wxRA_SPECIFY_COLS,
-                           wxDefaultValidator, wxT("radioBox")); // y+=ya+ya/2;
-    switch (my_lisaconfig->kbid)
+    // ---- Identity ------------------------------------------------------
     {
-    case 0xAD2d:
-        kbbox->SetSelection(2);
-        break;
-    case 0xAE2e:
-        kbbox->SetSelection(3);
-        break;
-    case 0xAF2f:
-        kbbox->SetSelection(1);
-        break;
-    case 0xBF2f:
-    default:
-        kbbox->SetSelection(0);
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, panel, _T("Identity"));
+
+        wxBoxSizer *r1 = new wxBoxSizer(wxHORIZONTAL);
+        r1->Add(new wxStaticText(panel, wxID_ANY, _T("Serial number:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        serialtxt = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->myserial);
+        r1->Add(serialtxt, 1, wxALIGN_CENTER_VERTICAL);
+        r1->Add(new wxButton(panel, ID_SERNO_INFO, wxT("Info...")), 0, wxLEFT, B);
+        g->Add(r1, 0, wxEXPAND | wxALL, B);
+
+        wxBoxSizer *r2 = new wxBoxSizer(wxHORIZONTAL);
+        r2->Add(new wxStaticText(panel, wxID_ANY, _T("Keyboard:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        wxString kbid[] = {wxT("US"), wxT("UK"), wxT("FR"), wxT("DE")};
+        kbbox = new wxChoice(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, 4, kbid);
+        switch (my_lisaconfig->kbid)
+        {
+        case 0xAD2d: kbbox->SetSelection(2); break;
+        case 0xAE2e: kbbox->SetSelection(3); break;
+        case 0xAF2f: kbbox->SetSelection(1); break;
+        case 0xBF2f:
+        default:     kbbox->SetSelection(0);
+        }
+        r2->Add(kbbox, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B * 3);
+        r2->Add(new wxStaticText(panel, wxID_ANY, _T("I/O ROM:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        wxString iorom[] = {wxT("A8"), wxT("88"), wxT("89"), wxT("A9"), wxT("40")};
+        iorombox = new wxChoice(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, 5, iorom);
+        switch (my_lisaconfig->iorom)
+        {
+        case 0x88: iorombox->SetSelection(1); break;
+        case 0x89: iorombox->SetSelection(2); break;
+        case 0xa9: iorombox->SetSelection(3); break;
+        case 0x40: iorombox->SetSelection(4); break;
+        case 0xa8:
+        default:   iorombox->SetSelection(0);
+        }
+        r2->Add(iorombox, 0, wxALIGN_CENTER_VERTICAL);
+        g->Add(r2, 0, wxEXPAND | wxALL, B);
+        page->Add(g, 0, wxEXPAND | wxALL, B);
     }
 
-    wxString iorom[] = {wxT("A8"), wxT("88"), wxT("89"), wxT("A9"), wxT("40")};
-    iorombox = new wxRadioBox(panel, wxID_ANY, wxT("I/O ROM:"), wxPoint(320 * HIDPISCALE, y), wxDefaultSize, 5, iorom, 0, wxRA_SPECIFY_COLS,
-                              wxDefaultValidator, wxT("radioBox"));
-    y += ya + (ya >> 1);
-    switch (my_lisaconfig->iorom)
+    // ---- ROMs ----------------------------------------------------------
     {
-    case 0x88:
-        iorombox->SetSelection(1);
-        break;
-    case 0x89:
-        iorombox->SetSelection(2);
-        break;
-    case 0xa9:
-        iorombox->SetSelection(3);
-        break;
-    case 0x40:
-        iorombox->SetSelection(4);
-        break;
-    case 0xa8:
-    default:
-        iorombox->SetSelection(0);
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, panel, _T("ROMs"));
+
+        wxFlexGridSizer *fg = new wxFlexGridSizer(2, 3, B, B);
+        fg->AddGrowableCol(1, 1);
+
+        fg->Add(new wxStaticText(panel, wxID_ANY, _T("Lisa boot ROM:")), 0, wxALIGN_CENTER_VERTICAL);
+        m_rompath = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->rompath);
+        fg->Add(m_rompath, 1, wxEXPAND);
+        b_rompath = new wxButton(panel, ID_PICK_ROM, wxT("Browse..."));
+        fg->Add(b_rompath, 0);
+
+        fg->Add(new wxStaticText(panel, wxID_ANY, _T("Dual-Parallel:")), 0, wxALIGN_CENTER_VERTICAL);
+        m_dprompath = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->dualrom);
+        fg->Add(m_dprompath, 1, wxEXPAND);
+        b_dprompath = new wxButton(panel, ID_PICK_DPROM, wxT("Browse..."));
+        fg->Add(b_dprompath, 0);
+
+        g->Add(fg, 0, wxEXPAND | wxALL, B);
+
+        wxStaticText *warn = new wxStaticText(panel, wxID_ANY,
+                                              _T("Note: changing the Lisa boot ROM requires restarting LisaEm."));
+        warn->SetForegroundColour(wxColour(0xB2, 0x50, 0x00));
+        g->Add(warn, 0, wxLEFT | wxRIGHT | wxBOTTOM, B);
+        page->Add(g, 0, wxEXPAND | wxALL, B);
     }
 
-    doublesided = new wxCheckBox(panel, wxID_ANY, wxT("SunRem 2x Sided Sony"), wxPoint(320 * HIDPISCALE, y - (ya / 2)), wxDefaultSize, wxCHK_2STATE);
-    doublesided->SetValue((bool)(double_sided_floppy)); // y+=ya/2;
+    // ---- Behavior ------------------------------------------------------
+    {
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, panel, _T("Behavior"));
+        wxFlexGridSizer *fg = new wxFlexGridSizer(3, 2, B, B * 4);
+        fg->AddGrowableCol(0, 1);
+        fg->AddGrowableCol(1, 1);
 
-    soundeffects = new wxCheckBox(panel, wxID_ANY, wxT("Sound Effects"), wxPoint(10 * HIDPISCALE, y), wxDefaultSize, wxCHK_2STATE);
-    soundeffects->SetValue((bool)(sound_effects_on));
-    y += ya / 2;
-    int yz = y;
+        cheats = new wxCheckBox(panel, wxID_ANY, wxT("Boot ROM speedup hacks"));
+        cheats->SetValue((bool)(cheat_ram_test));
+        fg->Add(cheats);
+        hle_cheats = new wxCheckBox(panel, wxID_ANY, wxT("Hard drive acceleration"));
+        hle_cheats->SetValue((bool)(hle));
+        fg->Add(hle_cheats);
+        console_term = new wxCheckBox(panel, wxID_ANY, wxT("Console terminal"));
+        console_term->SetValue((bool)consoletermwindow);
+        fg->Add(console_term);
+        doublesided = new wxCheckBox(panel, wxID_ANY, wxT("Double-sided Sony floppy"));
+        doublesided->SetValue((bool)(double_sided_floppy));
+        fg->Add(doublesided);
+        soundeffects = new wxCheckBox(panel, wxID_ANY, wxT("Sound effects"));
+        soundeffects->SetValue((bool)(sound_effects_on));
+        fg->Add(soundeffects);
+        skinson = new wxCheckBox(panel, wxID_ANY, wxT("Lisa skins"));
+        skinson->SetValue((bool)(skins_on_next_run));
+        fg->Add(skinson);
 
-    skinson = new wxCheckBox(panel, wxID_ANY, wxT("Lisa Skins"), wxPoint(10 * HIDPISCALE, y), wxDefaultSize, wxCHK_2STATE);
-    skinson->SetValue((bool)(skins_on_next_run));
-    y += ya / 2;
+        g->Add(fg, 0, wxEXPAND | wxALL, B);
+        page->Add(g, 0, wxEXPAND | wxALL, B);
+    }
 
-    cheats = new wxCheckBox(panel, wxID_ANY, wxT("Boot ROM speedup hacks"), wxPoint(10 * HIDPISCALE, y), wxDefaultSize, wxCHK_2STATE);
-    cheats->SetValue((bool)(cheat_ram_test));
+    // ---- Parameter RAM -------------------------------------------------
+    {
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxHORIZONTAL, panel, _T("Parameter RAM (PRAM)"));
+        g->AddStretchSpacer(1);
+        g->Add(new wxButton(panel, ID_SAVE_PRAM, wxT("Save...")), 0, wxRIGHT, B);
+        g->Add(new wxButton(panel, ID_LOAD_PRAM, wxT("Load...")), 0, wxRIGHT, B);
+        g->Add(new wxButton(panel, ID_ZAP_PRAM, wxT("Zap")), 0, wxRIGHT, B);
+        page->Add(g, 0, wxEXPAND | wxALL, B);
+    }
 
-    hle_cheats = new wxCheckBox(panel, wxID_ANY, wxT("Hard Drive Acceleration"), wxPoint(10 * HIDPISCALE, y + ya / 2), wxDefaultSize, wxCHK_2STATE);
-    hle_cheats->SetValue((bool)(hle));
-    y += ya / 2;
+    // ---- Prefs file location (footer) ---------------------------------
+    wxStaticText *pf = new wxStaticText(panel, wxID_ANY, _T("Prefs file: ") + get_config_filename());
+    pf->SetForegroundColour(wxColour(0x6e, 0x6e, 0x73));
+    page->Add(pf, 0, wxALL, B);
 
-    console_term = new wxCheckBox(panel, wxID_ANY, wxT("Console Terminal"), wxPoint(10 * HIDPISCALE, y + ya / 2), wxDefaultSize, wxCHK_2STATE);
-    console_term->SetValue((bool)consoletermwindow);
-
-    applypoint = wxPoint(420 * HIDPISCALE, yz + ya);
-    (void)new wxButton(panel, ID_APPLY, wxT("Apply"), applypoint, wxDefaultSize);
-
-    (void)new wxStaticText(panel, wxID_ANY, _T("PRAM:"), wxPoint(320 * HIDPISCALE, (yz)-ya / 2), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE));
-    (void)new wxButton(panel, ID_SAVE_PRAM, wxT("Save"), wxPoint(320 * HIDPISCALE, yz), wxDefaultSize);
-    (void)new wxButton(panel, ID_LOAD_PRAM, wxT("Load"), wxPoint(400 * HIDPISCALE, yz), wxDefaultSize);
-    (void)new wxButton(panel, ID_ZAP_PRAM, wxT("Zap"), wxPoint(480 * HIDPISCALE, yz), wxDefaultSize);
-
+    panel->SetSizer(page);
     return panel;
 }
 
@@ -911,7 +949,6 @@ wxPanel *LisaConfigFrame::CreatePortsConfigPage(wxNotebook *parent)
     b_propath = new wxButton(panel, ID_PICK_PROFILE, wxT("browse"), wxPoint(420 * HIDPISCALE, y), wxDefaultSize);
 
     ya += ya * 2;
-    (void)new wxButton(panel, ID_APPLY, wxT("Apply"), applypoint, wxDefaultSize);
 
     return panel;
 }
@@ -936,7 +973,7 @@ wxPanel *LisaConfigFrame::CreatePrinterConfigPage(wxNotebook *parent)
 
     (void)new wxStaticText(panel, wxID_ANY, _T("pins123: Font"),
                            wxPoint(10 * HIDPISCALE, y), wxSize(300 * HIDPISCALE, 30 * HIDPISCALE));
-    dipsw1_123 = new wxChoice(panel, wxID_ANY, wxPoint(380 * HIDPISCALE, y), wxDefaultSize, 8, fontopt);
+    dipsw1_123 = new wxChoice(panel, wxID_ANY, wxPoint(320 * HIDPISCALE, y), wxDefaultSize, 8, fontopt);
     y += ya;
     y += ya / 2;
     dipsw1_123->SetSelection(my_lisaconfig->iw_dipsw_1 & 7);
@@ -967,7 +1004,7 @@ wxPanel *LisaConfigFrame::CreatePrinterConfigPage(wxNotebook *parent)
 
     (void)new wxStaticText(panel, wxID_ANY, _T("pins67: Pitch"),
                            wxPoint(10 * HIDPISCALE, y), wxSize(300 * HIDPISCALE, 30 * HIDPISCALE));
-    dipsw1_67 = new wxChoice(panel, wxID_ANY, wxPoint(420, y), wxDefaultSize, 4, bit67opt);
+    dipsw1_67 = new wxChoice(panel, wxID_ANY, wxPoint(320 * HIDPISCALE, y), wxDefaultSize, 4, bit67opt);
     y += ya;
     y += ya / 2;
     dipsw1_67->SetSelection((my_lisaconfig->iw_dipsw_1 >> 5) & 3);
@@ -987,7 +1024,6 @@ wxPanel *LisaConfigFrame::CreatePrinterConfigPage(wxNotebook *parent)
 
     iw_img_path_b = new wxButton(panel, ID_PICK_IWDIR, wxT("browse"), wxPoint(420 * HIDPISCALE, y), wxDefaultSize);
 
-    (void)new wxButton(panel, ID_APPLY, wxT("Apply"), applypoint, wxDefaultSize);
     return panel;
 }
 

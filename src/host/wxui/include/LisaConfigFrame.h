@@ -29,7 +29,11 @@ public:
     void CreateNotebook(wxNotebook *parent);
 
     //          event handlers
-    void OnApply(wxCommandEvent &event);
+    void ApplyChanges();  // commit control values into the LisaConfig (no close)
+    void OnApply(wxCommandEvent &event); // Apply button: commit, stay open
+    void OnOK(wxCommandEvent &event);    // OK button: commit & close
+    void OnControlChanged(wxCommandEvent &event); // any edit -> enable Apply
+    void SetApplyEnabled(bool enabled);
     void OnZapPram(wxCommandEvent &event);
     void OnSavePram(wxCommandEvent &event);
     void OnLoadPram(wxCommandEvent &event);
@@ -62,9 +66,9 @@ public:
     wxTextCtrl *m_dprompath; // Dual Parallel Expansion Slot ROM
     wxButton *b_dprompath;
 
-    wxRadioBox *kbbox; // keyboard ID
+    wxChoice *kbbox; // keyboard ID
 
-    wxRadioBox *iorombox; // I/O ROM version
+    wxChoice *iorombox; // I/O ROM version
 
     wxRadioBox *cpurambox;
 

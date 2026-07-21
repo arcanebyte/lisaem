@@ -72,6 +72,8 @@ enum
     ID_APPLY,
     ID_SLOT_CARD,
     ID_SLOT_PICK,
+    ID_SERIAL_A,
+    ID_SERIAL_B,
     ID_PICK_ROM,
     ID_PICK_DPROM,
     ID_PICK_KB_B,
@@ -107,6 +109,10 @@ EVT_BUTTON(wxID_OK, LisaConfigFrame::OnOK)        // dialog OK: commit & close
 EVT_CHOICE(ID_SLOT_CARD, LisaConfigFrame::OnSlotCardChanged)
 // slot 1/2/3 selector: switch which slot the slotbook shows (navigation, not an edit)
 EVT_CHOICE(ID_SLOT_PICK, LisaConfigFrame::OnSlotPick)
+// serial port dropdowns: keep the LisaTest loopback pair in sync in realtime
+EVT_CHOICE(ID_SERIAL_A, LisaConfigFrame::OnSerialChanged)
+EVT_CHOICE(ID_SERIAL_B, LisaConfigFrame::OnSerialChanged)
+EVT_BUTTON(wxID_CANCEL, LisaConfigFrame::OnCancel) // Cancel: warn about unapplied edits
 // any edit to a control marks the config dirty and re-enables Apply
 EVT_TEXT(wxID_ANY, LisaConfigFrame::OnControlChanged)
 EVT_CHECKBOX(wxID_ANY, LisaConfigFrame::OnControlChanged)
@@ -146,6 +152,7 @@ LisaConfigFrame::LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig)
     my_lisaconfig = lisaconfig;
     serialabox = NULL;
     serialbbox = NULL;
+    m_dirty = false;
     slotbook = NULL;
     slotpick = NULL;
     for (int s = 0; s < 4; s++)
@@ -384,6 +391,9 @@ extern "C" int lisa_is_powered_on(void);
 
 void LisaConfigFrame::SetApplyEnabled(bool enabled)
 {
+    // Apply is enabled exactly when there are uncommitted edits, so this also
+    // tracks the dirty state used by the OK/Cancel close warnings.
+    m_dirty = enabled;
     // The Apply button is created by CreateButtonSizer(); look it up by id.
     wxWindow *b = FindWindow(wxID_APPLY);
     if (b)
@@ -396,6 +406,26 @@ void LisaConfigFrame::OnControlChanged(wxCommandEvent &event)
     event.Skip();          // let the control's normal processing continue
 }
 
+void LisaConfigFrame::OnSerialChanged(wxCommandEvent &event)
+{
+    // The LisaTest loopback adapter physically connects both serial ports, so
+    // one port going to Loopback forces the other to Loopback as well. Warn and
+    // do it in realtime. "Loopback" is index 1 in both nothingonly and serportopts.
+    if (serialabox && serialbbox)
+    {
+        wxChoice *other = (event.GetId() == ID_SERIAL_A) ? serialbbox : serialabox;
+        if (event.GetSelection() == 1 && other->GetSelection() != 1)
+        {
+            wxMessageBox(_T("The LisaTest loopback adapter connects both serial ports.\n\n"
+                            "The other serial port will also be set to Loopback."),
+                         _T("Loopback"), wxOK | wxICON_INFORMATION, this);
+            other->SetSelection(1);
+        }
+    }
+    SetApplyEnabled(true); // changing a serial port is an edit
+    event.Skip();
+}
+
 void LisaConfigFrame::OnApply(wxCommandEvent &WXUNUSED(event))
 {
     ApplyChanges();
@@ -404,8 +434,36 @@ void LisaConfigFrame::OnApply(wxCommandEvent &WXUNUSED(event))
 
 void LisaConfigFrame::OnOK(wxCommandEvent &WXUNUSED(event))
 {
-    ApplyChanges();
+    if (m_dirty)
+    {
+        wxMessageDialog dlg(this,
+                            _T("You have changes that haven't been applied.\n\nApply them before closing?"),
+                            _T("Apply changes?"),
+                            wxYES_NO | wxCANCEL | wxICON_QUESTION);
+        dlg.SetYesNoLabels(_T("Apply"), _T("Don't Apply"));
+        int r = dlg.ShowModal();
+        if (r == wxID_CANCEL)
+            return; // keep the dialog open
+        if (r == wxID_YES)
+            ApplyChanges();
+        // wxID_NO -> close without applying
+    }
     EndModal(wxID_OK);
+}
+
+void LisaConfigFrame::OnCancel(wxCommandEvent &WXUNUSED(event))
+{
+    if (m_dirty)
+    {
+        wxMessageDialog dlg(this,
+                            _T("Discard your unapplied changes?"),
+                            _T("Discard changes?"),
+                            wxYES_NO | wxICON_EXCLAMATION);
+        dlg.SetYesNoLabels(_T("Discard"), _T("Keep Editing"));
+        if (dlg.ShowModal() != wxID_YES)
+            return; // keep editing
+    }
+    EndModal(wxID_CANCEL);
 }
 
 void LisaConfigFrame::ApplyChanges()
@@ -934,10 +992,10 @@ wxPanel *LisaConfigFrame::CreatePortsConfigPage(wxNotebook *parent)
         // Serial A is limited to Nothing / Loopback (the LisaTest loopback adapter).
         // nothingonly[0..1] mirror serportopts[0..1], so ApplyChanges' serportopts[]
         // lookup and the loopback sync (which selects index 1) both stay correct.
-        serialabox = new wxChoice(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, nothingonly);
+        serialabox = new wxChoice(panel, ID_SERIAL_A, wxDefaultPosition, wxDefaultSize, 2, nothingonly);
         serialabox->SetSelection(my_lisaconfig->serial1_setting.IsSameAs(_T("Loopback"), false) ? 1 : 0);
 #else
-        serialabox = new wxChoice(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, serialopts, serportopts);
+        serialabox = new wxChoice(panel, ID_SERIAL_A, wxDefaultPosition, wxDefaultSize, serialopts, serportopts);
         for (i = 0; i < serialopts; i++)
             if (my_lisaconfig->serial1_setting.IsSameAs(serportopts[i], false))
                 serialabox->SetSelection(i);
@@ -964,7 +1022,7 @@ wxPanel *LisaConfigFrame::CreatePortsConfigPage(wxNotebook *parent)
 
         wxBoxSizer *r1 = new wxBoxSizer(wxHORIZONTAL);
         r1->Add(new wxStaticText(panel, wxID_ANY, _T("Port:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
-        serialbbox = new wxChoice(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, serialopts, serportopts);
+        serialbbox = new wxChoice(panel, ID_SERIAL_B, wxDefaultPosition, wxDefaultSize, serialopts, serportopts);
         for (i = 0; i < serialopts; i++)
             if (my_lisaconfig->serial2_setting.IsSameAs(serportopts[i], false))
                 serialbbox->SetSelection(i);
@@ -1146,12 +1204,47 @@ void LisaConfigFrame::OnPickDRom(wxCommandEvent &WXUNUSED(event))
 // "unable to identify disk format" note is shown later at mount time. Defined in libdc42 (DC42_KIND_FLOPPY==2).
 extern "C" int dc42_classify_image(char *filename);
 
-static void set_profile_path_checked(wxTextCtrl *target, const wxString &path)
+// True if `path` is already set in another ProFile/Widget image field (not `except`).
+// The same backing disk image must never be attached to two devices at once, as
+// both would write to it and corrupt each other.
+bool LisaConfigFrame::path_in_use_elsewhere(const wxString &path, wxTextCtrl *except)
 {
+    if (path.IsEmpty())
+        return false;
+
+    wxTextCtrl *fields[] = {
+        m_propath,
+        m_text_propathh[1], m_text_propathl[1],
+        m_text_propathh[2], m_text_propathl[2],
+        m_text_propathh[3], m_text_propathl[3]};
+
+    for (unsigned i = 0; i < sizeof(fields) / sizeof(fields[0]); i++)
+    {
+        if (!fields[i] || fields[i] == except)
+            continue;
+        if (path.IsSameAs(fields[i]->GetValue())) // paths are case-sensitive
+            return true;
+    }
+    return false;
+}
+
+void LisaConfigFrame::set_profile_path_checked(wxTextCtrl *target, const wxString &path)
+{
+    if (path_in_use_elsewhere(path, target)) // don't attach the same image twice
+    {
+        wxMessageDialog(this,
+                        _T("That disk image is already attached to another port or slot.\n\n"
+                           "The same image cannot be used in two places at once."),
+                        _T("Disk image already in use"),
+                        wxOK | wxICON_EXCLAMATION)
+            .ShowModal();
+        return; // leave the field unchanged
+    }
+
     int kind = dc42_classify_image((char *)(const char *)path.mb_str());
     if (kind == 2) // DC42_KIND_FLOPPY - a dc42 floppy is the wrong type for a ProFile slot: reject
     {
-        wxMessageDialog(NULL,
+        wxMessageDialog(this,
                         _T("That's a floppy disk image, not a ProFile.\n\nPlease choose a ProFile image (or a raw image)."),
                         _T("Wrong image type for a ProFile slot"),
                         wxOK | wxICON_EXCLAMATION)
@@ -1160,7 +1253,7 @@ static void set_profile_path_checked(wxTextCtrl *target, const wxString &path)
     }
     if (kind == 0) // DC42_KIND_RAW - not a recognizable dc42; allow it, but say the format is unknown
     {
-        wxMessageDialog(NULL,
+        wxMessageDialog(this,
                         _T("Unable to identify disk format. It will be used as-is."),
                         _T("Unrecognized disk image"),
                         wxOK | wxICON_INFORMATION)

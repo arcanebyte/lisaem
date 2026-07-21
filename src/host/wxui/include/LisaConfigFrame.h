@@ -36,6 +36,10 @@ public:
     void OnOK(wxCommandEvent &event);    // OK button: commit & close
     void OnControlChanged(wxCommandEvent &event); // any edit -> enable Apply
     void SetApplyEnabled(bool enabled);
+    void OnCancel(wxCommandEvent &event);          // Cancel: warn if there are unapplied edits
+    void OnSerialChanged(wxCommandEvent &event);   // serial port -> loopback pairing (realtime)
+    void set_profile_path_checked(wxTextCtrl *target, const wxString &path); // validate + set an image path
+    bool path_in_use_elsewhere(const wxString &path, wxTextCtrl *except);    // duplicate-image guard
     void OnSlotCardChanged(wxCommandEvent &event); // slot card dropdown -> show/hide ports
     void OnSlotPick(wxCommandEvent &event);        // slot 1/2/3 selector -> switch slotbook page
     void UpdateSlotVisibility(int slot);           // ports config only when a card is installed
@@ -131,6 +135,7 @@ public:
 private:
     LisaConfig *my_lisaconfig;
     wxString slotcard[2];
+    bool m_dirty; // true when controls hold edits not yet committed via Apply/OK
 
     DECLARE_EVENT_TABLE()
 };

@@ -881,75 +881,99 @@ wxPanel *LisaConfigFrame::CreateMainConfigPage(wxNotebook *parent)
 wxPanel *LisaConfigFrame::CreatePortsConfigPage(wxNotebook *parent)
 {
     wxPanel *panel = new wxPanel(parent);
-    // wxPanel *panel = new wxPanel(parent,wxID_ANY,wxDefaultPosition,wxSize(320,200),wxT("ports"));
-    int y = 10 * HIDPISCALE, ya = 35 * HIDPISCALE;
+    wxBoxSizer *page = new wxBoxSizer(wxVERTICAL);
+    const int B = 6 * HIDPISCALE;
     int i;
 
-    (void)new wxStaticText(panel, wxID_ANY, _T("Serial A:"), wxPoint(10, y + 10), wxSize(100 * HIDPISCALE, 30 * HIDPISCALE));
+    // ---- Serial Port A -------------------------------------------------
+    {
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, panel, _T("Serial Port A"));
 
+        wxBoxSizer *r1 = new wxBoxSizer(wxHORIZONTAL);
+        r1->Add(new wxStaticText(panel, wxID_ANY, _T("Port:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
 #ifndef ALLOWSERIALA
-    serialabox = new wxChoice(panel, wxID_ANY, wxPoint(100 * HIDPISCALE, y), wxDefaultSize, 1 /* serialopts */, nothingonly);
-    y += ya;
-    serialabox->SetSelection(0);
+        // Serial A is limited to Nothing / Loopback (the LisaTest loopback adapter).
+        // nothingonly[0..1] mirror serportopts[0..1], so ApplyChanges' serportopts[]
+        // lookup and the loopback sync (which selects index 1) both stay correct.
+        serialabox = new wxChoice(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, nothingonly);
+        serialabox->SetSelection(my_lisaconfig->serial1_setting.IsSameAs(_T("Loopback"), false) ? 1 : 0);
 #else
-    serialabox = new wxChoice(panel, wxID_ANY, wxPoint(100 * HIDPISCALE, y), wxDefaultSize, serialopts, serportopts);
-    y += ya + ya;
-    for (i = 0; i < serialopts; i++)
-        if (my_lisaconfig->serial1_setting.IsSameAs(serportopts[i], false))
-            serialabox->SetSelection(i);
+        serialabox = new wxChoice(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, serialopts, serportopts);
+        for (i = 0; i < serialopts; i++)
+            if (my_lisaconfig->serial1_setting.IsSameAs(serportopts[i], false))
+                serialabox->SetSelection(i);
 #endif
+        r1->Add(serialabox, 0, wxALIGN_CENTER_VERTICAL);
+        r1->AddStretchSpacer(1);
+        serialaxon = new wxCheckBox(panel, wxID_ANY, wxT("Xon/Xoff flow control"));
+        serialaxon->SetValue((bool)(my_lisaconfig->serial1xon.IsSameAs(_T("1"), false)));
+        r1->Add(serialaxon, 0, wxALIGN_CENTER_VERTICAL);
+        g->Add(r1, 0, wxEXPAND | wxALL, B);
 
-    // y+=ya/8;
-    serialaparam = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->serial1_param,
-                                  wxPoint(10 * HIDPISCALE, y), wxSize(380 * HIDPISCALE, 30 * HIDPISCALE), 0);
+        wxBoxSizer *r2 = new wxBoxSizer(wxHORIZONTAL);
+        r2->Add(new wxStaticText(panel, wxID_ANY, _T("Settings:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        serialaparam = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->serial1_param);
+        r2->Add(serialaparam, 1, wxALIGN_CENTER_VERTICAL);
+        g->Add(r2, 0, wxEXPAND | wxALL, B);
 
-    serialaxon = new wxCheckBox(panel, wxID_ANY, wxT("Xon/off"),
-                                wxPoint(430 * HIDPISCALE, y - (HIDPISCALE * 8)), wxSize(300 * HIDPISCALE, 50 * HIDPISCALE), 0);
-    serialaxon->SetValue((bool)(my_lisaconfig->serial1xon.IsSameAs(_T("1"), false)));
-    y += ya * 2;
+        page->Add(g, 0, wxEXPAND | wxALL, B);
+    }
 
-    (void)new wxStaticText(panel, wxID_ANY, _T("Serial B:"), wxPoint(10, y + 10), wxSize(100 * HIDPISCALE, 30 * HIDPISCALE));
-    serialbbox = new wxChoice(panel, wxID_ANY, wxPoint(100 * HIDPISCALE, y), wxDefaultSize, serialopts, serportopts);
-    y += ya; // wxSize(380 * HIDPISCALE,128 * HIDPISCALE)
-    //    serialbbox = new wxRadioBox(panel, wxID_ANY,
-    //        wxT("Serial B:"), wxPoint(10 * HIDPISCALE, y), wxSize(380 * HIDPISCALE,128 * HIDPISCALE), serialopts, serportopts, 2, wxRA_SPECIFY_COLS,
-    //        wxDefaultValidator, wxT("radioBox"));                                                       y+=ya+ya;
+    // ---- Serial Port B -------------------------------------------------
+    {
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, panel, _T("Serial Port B"));
 
-    // y+=ya/8;
-    serialbparam = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->serial2_param, wxPoint(10, y), wxSize(380 * HIDPISCALE, 30 * HIDPISCALE), 0);
+        wxBoxSizer *r1 = new wxBoxSizer(wxHORIZONTAL);
+        r1->Add(new wxStaticText(panel, wxID_ANY, _T("Port:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        serialbbox = new wxChoice(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, serialopts, serportopts);
+        for (i = 0; i < serialopts; i++)
+            if (my_lisaconfig->serial2_setting.IsSameAs(serportopts[i], false))
+                serialbbox->SetSelection(i);
+        r1->Add(serialbbox, 0, wxALIGN_CENTER_VERTICAL);
+        r1->AddStretchSpacer(1);
+        serialbxon = new wxCheckBox(panel, wxID_ANY, wxT("Xon/Xoff flow control"));
+        serialbxon->SetValue((bool)(my_lisaconfig->serial2xon.IsSameAs(_T("1"), false)));
+        r1->Add(serialbxon, 0, wxALIGN_CENTER_VERTICAL);
+        g->Add(r1, 0, wxEXPAND | wxALL, B);
 
-    serialbxon = new wxCheckBox(panel, wxID_ANY, wxT("Xon/Off"),
-                                wxPoint(430 * HIDPISCALE, y - (HIDPISCALE * 12)), wxDefaultSize, 0); // wxSize(300 * HIDPISCALE, 60 * HIDPISCALE)
-    serialbxon->SetValue((bool)(my_lisaconfig->serial2xon.IsSameAs(_T("1"), false)));
+        wxBoxSizer *r2 = new wxBoxSizer(wxHORIZONTAL);
+        r2->Add(new wxStaticText(panel, wxID_ANY, _T("Settings:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        serialbparam = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->serial2_param);
+        r2->Add(serialbparam, 1, wxALIGN_CENTER_VERTICAL);
+        g->Add(r2, 0, wxEXPAND | wxALL, B);
 
-    for (i = 0; i < serialopts; i++)
-        if (my_lisaconfig->serial2_setting.IsSameAs(serportopts[i], false))
-            serialbbox->SetSelection(i);
+        page->Add(g, 0, wxEXPAND | wxALL, B);
+    }
 
-    y += ya * 2;
+    // ---- Built-in Parallel Port ----------------------------------------
+    {
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, panel, _T("Built-in Parallel Port"));
 
-    pportbox = new wxRadioBox(panel, wxID_ANY,
-                                  wxT("Parallel Port:"), wxPoint(10, y), wxDefaultSize, 3, 
-                                  (floppy_iorom == 0x88)? wpportopts:pportopts, // Display "Profile" or "Widget" on the radio button, depending on the IO ROM version.
-                                  0, wxRA_SPECIFY_COLS,
-                                  wxDefaultValidator, wxT("radioBox"));
+        // Radio labels read "Profile"/"Widget" depending on the I/O ROM version.
+        pportbox = new wxRadioBox(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 3,
+                                  (floppy_iorom == 0x88) ? wpportopts : pportopts,
+                                  0, wxRA_SPECIFY_COLS);
+        // default to profile for the builtin parallel port
+        if (my_lisaconfig->parallel.IsSameAs(_T("Nothing"), false))
+            pportbox->SetSelection(2);
+        else if (my_lisaconfig->parallel.IsSameAs(_T("ADMP"), false))
+            pportbox->SetSelection(1);
+        else
+            pportbox->SetSelection(0);
+        g->Add(pportbox, 0, wxALL, B);
 
-    y += ya * 2;
+        wxBoxSizer *r = new wxBoxSizer(wxHORIZONTAL);
+        r->Add(new wxStaticText(panel, wxID_ANY, _T("Disk image:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        m_propath = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->parallelp);
+        r->Add(m_propath, 1, wxALIGN_CENTER_VERTICAL);
+        b_propath = new wxButton(panel, ID_PICK_PROFILE, wxT("Browse..."));
+        r->Add(b_propath, 0, wxLEFT, B);
+        g->Add(r, 0, wxEXPAND | wxALL, B);
 
-    // default to profile for builtin parallel port
-    if (my_lisaconfig->parallel.IsSameAs(_T("Nothing"), false))
-        pportbox->SetSelection(2);
-    else if (my_lisaconfig->parallel.IsSameAs(_T("ADMP"), false))
-        pportbox->SetSelection(1);
-    else
-        pportbox->SetSelection(0);
+        page->Add(g, 0, wxEXPAND | wxALL, B);
+    }
 
-    m_propath = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->parallelp,
-                               wxPoint(10 * HIDPISCALE, y), wxSize(380 * HIDPISCALE, 30 * HIDPISCALE), 0);
-    b_propath = new wxButton(panel, ID_PICK_PROFILE, wxT("browse"), wxPoint(420 * HIDPISCALE, y), wxDefaultSize);
-
-    ya += ya * 2;
-
+    panel->SetSizer(page);
     return panel;
 }
 

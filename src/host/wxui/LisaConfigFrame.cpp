@@ -193,9 +193,9 @@ LisaConfigFrame::LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig)
         new wxNotebook(this, ID_NOTEBOOK, wxDefaultPosition, wxSize(550, 650));
     CreateNotebook(thenoteBook);
 
-    // Keep the notebook big enough for the pages still using absolute layout
-    // (Ports/Slots/Printer) until they are converted to sizers too.
-    thenoteBook->SetMinSize(wxSize(550 * HIDPISCALE, 650 * HIDPISCALE));
+    // All pages are sizer-based now, so let the height fit content; keep a
+    // comfortable minimum width so the disk-image path fields aren't cramped.
+    thenoteBook->SetMinSize(wxSize(550 * HIDPISCALE, -1));
 
     // Stage 1: wrap the notebook + a native OK/Cancel button bar so this is a proper modal dialog.
     wxBoxSizer *topsizer = new wxBoxSizer(wxVERTICAL);
@@ -1019,74 +1019,75 @@ wxPanel *LisaConfigFrame::CreatePortsConfigPage(wxNotebook *parent)
 wxPanel *LisaConfigFrame::CreatePrinterConfigPage(wxNotebook *parent)
 {
     wxPanel *panel = new wxPanel(parent);
-    int y = 10, ya = 45;
+    wxBoxSizer *page = new wxBoxSizer(wxVERTICAL);
+    const int B = 6 * HIDPISCALE;
 
-    (void)new wxStaticText(panel, wxID_ANY, _T("ImageWriter/ADMP DIP Switch 1:"),
-                           wxPoint(10 * HIDPISCALE, y), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE));
-    y += (ya / 2);
+    // Label text is cosmetic; ApplyChanges reads these by index, so the option
+    // order below must match the DIP-switch bit encoding (see iw_dipsw_1).
 
-    wxString fontopt[] = {wxT("000 American"),   //    ESC Z,^G,^@
-                          wxT("001 German"),     //    ESC Z,^C,^@,ESC D,^D,^@
-                          wxT("010 American 2"), //    ESC Z,^E,^@,ESC D,^B,^@
-                          wxT("011 French"),     //    ESC Z,^A,^@,ESC D,^F,^@
-                          wxT("100 Italian"),    //    ESC Z,^F,^@,ESC D,^A,^@
-                          wxT("101 Sweedish"),   //    ESC Z,^B,^@,ESC D,^E,^@
-                          wxT("110 British"),    //    ESC Z,^D,^@,ESC D,^C,^@
-                          wxT("111 Spanish")};   //    ESC D,^G,^@
+    // ---- ImageWriter / ADMP - DIP Switch 1 -----------------------------
+    {
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, panel, _T("ImageWriter / ADMP - DIP Switch 1"));
 
-    (void)new wxStaticText(panel, wxID_ANY, _T("pins123: Font"),
-                           wxPoint(10 * HIDPISCALE, y), wxSize(300 * HIDPISCALE, 30 * HIDPISCALE));
-    dipsw1_123 = new wxChoice(panel, wxID_ANY, wxPoint(320 * HIDPISCALE, y), wxDefaultSize, 8, fontopt);
-    y += ya;
-    y += ya / 2;
-    dipsw1_123->SetSelection(my_lisaconfig->iw_dipsw_1 & 7);
+        wxFlexGridSizer *fg = new wxFlexGridSizer(0, 2, B, B);
+        fg->AddGrowableCol(1, 1);
 
-    // bit 4-    72 lines (on) 66 lines (off)
-    // bit 5-    If on, AND all data with 127 (strip 8th bit)
+        wxString fontopt[] = {wxT("American"), wxT("German"), wxT("American 2"), wxT("French"),
+                              wxT("Italian"), wxT("Swedish"), wxT("British"), wxT("Spanish")};
+        fg->Add(new wxStaticText(panel, wxID_ANY, _T("Font (pins 1-3):")), 0, wxALIGN_CENTER_VERTICAL);
+        dipsw1_123 = new wxChoice(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, 8, fontopt);
+        dipsw1_123->SetSelection(my_lisaconfig->iw_dipsw_1 & 7);
+        fg->Add(dipsw1_123, 0, wxEXPAND);
 
-    wxString bit4opt[] = {wxT("off - 66 lines"), wxT("on - 72 lines")};
-    dipsw1_4 = new wxRadioBox(panel, wxID_ANY,
-                              wxT("pin4: lines"), wxPoint(10 * HIDPISCALE, y), wxDefaultSize, 2, bit4opt, 0, wxRA_SPECIFY_COLS,
-                              wxDefaultValidator, wxT("radioBox"));
-    y += ya;
-    y += ya / 2;
-    dipsw1_4->SetSelection(!!(my_lisaconfig->iw_dipsw_1 & 8));
+        wxString bit67opt[] = {wxT("Elite Proportional"), wxT("Elite 12 cpi"),
+                               wxT("Ultracondensed 17 cpi"), wxT("Pica 10 cpi")};
+        fg->Add(new wxStaticText(panel, wxID_ANY, _T("Pitch (pins 6-7):")), 0, wxALIGN_CENTER_VERTICAL);
+        dipsw1_67 = new wxChoice(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, 4, bit67opt);
+        dipsw1_67->SetSelection((my_lisaconfig->iw_dipsw_1 >> 5) & 3);
+        fg->Add(dipsw1_67, 0, wxEXPAND);
 
-    wxString bit5opt[] = {wxT("off - 8 bit"), wxT("on - 7 bit data")};
-    dipsw1_5 = new wxRadioBox(panel, wxID_ANY,
-                              wxT("pin5: bits"), wxPoint(10 * HIDPISCALE, y), wxDefaultSize, 2, bit5opt, 0, wxRA_SPECIFY_COLS,
-                              wxDefaultValidator, wxT("radioBox"));
-    y += ya;
-    y += ya / 2;
-    dipsw1_5->SetSelection(!!(my_lisaconfig->iw_dipsw_1 & 16));
+        g->Add(fg, 0, wxEXPAND | wxALL, B);
 
-    wxString bit67opt[] = {wxT("00 Elite Prop."),
-                           wxT("01 Elite 12cpi"),
-                           wxT("10 Ultracondensed 17cpi"),
-                           wxT("11 Pica 10cpi")};
+        wxBoxSizer *radios = new wxBoxSizer(wxHORIZONTAL);
+        wxString bit4opt[] = {wxT("66 lines"), wxT("72 lines")};
+        dipsw1_4 = new wxRadioBox(panel, wxID_ANY, _T("Lines (pin 4)"), wxDefaultPosition, wxDefaultSize,
+                                  2, bit4opt, 1, wxRA_SPECIFY_ROWS);
+        dipsw1_4->SetSelection(!!(my_lisaconfig->iw_dipsw_1 & 8));
+        radios->Add(dipsw1_4, 0, wxRIGHT, B * 2);
+        wxString bit5opt[] = {wxT("8-bit"), wxT("7-bit")};
+        dipsw1_5 = new wxRadioBox(panel, wxID_ANY, _T("Data (pin 5)"), wxDefaultPosition, wxDefaultSize,
+                                  2, bit5opt, 1, wxRA_SPECIFY_ROWS);
+        dipsw1_5->SetSelection(!!(my_lisaconfig->iw_dipsw_1 & 16));
+        radios->Add(dipsw1_5, 0);
+        g->Add(radios, 0, wxALL, B);
 
-    (void)new wxStaticText(panel, wxID_ANY, _T("pins67: Pitch"),
-                           wxPoint(10 * HIDPISCALE, y), wxSize(300 * HIDPISCALE, 30 * HIDPISCALE));
-    dipsw1_67 = new wxChoice(panel, wxID_ANY, wxPoint(320 * HIDPISCALE, y), wxDefaultSize, 4, bit67opt);
-    y += ya;
-    y += ya / 2;
-    dipsw1_67->SetSelection((my_lisaconfig->iw_dipsw_1 >> 5) & 3);
+        dipsw1_8 = new wxCheckBox(panel, wxID_ANY, _T("Auto LF after CR (pin 8)"));
+        dipsw1_8->SetValue((bool)!!(my_lisaconfig->iw_dipsw_1 & 128));
+        g->Add(dipsw1_8, 0, wxALL, B);
 
-    dipsw1_8 = new wxCheckBox(panel, wxID_ANY, wxT("pin8: Auto LF after CR"), wxPoint(10 * HIDPISCALE, y), wxDefaultSize, wxCHK_2STATE);
-    dipsw1_8->SetValue((bool)!!(my_lisaconfig->iw_dipsw_1 & 128));
-    y += ya;
-    y += ya / 2;
+        page->Add(g, 0, wxEXPAND | wxALL, B);
+    }
 
-    iw_img_box = new wxCheckBox(panel, wxID_ANY, wxT("Print to images"), wxPoint(10 * HIDPISCALE, y), wxDefaultSize, wxCHK_2STATE);
-    iw_img_box->SetValue((bool)(!!my_lisaconfig->iw_png_on));
-    y += ya;
-    y += ya / 2;
+    // ---- Output --------------------------------------------------------
+    {
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, panel, _T("Output"));
 
-    iw_img_path = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->iw_png_path, wxPoint(10 * HIDPISCALE, y),
-                                 wxSize(400 * HIDPISCALE, 30 * HIDPISCALE), 0);
+        iw_img_box = new wxCheckBox(panel, wxID_ANY, _T("Print to images"));
+        iw_img_box->SetValue((bool)(!!my_lisaconfig->iw_png_on));
+        g->Add(iw_img_box, 0, wxALL, B);
 
-    iw_img_path_b = new wxButton(panel, ID_PICK_IWDIR, wxT("browse"), wxPoint(420 * HIDPISCALE, y), wxDefaultSize);
+        wxBoxSizer *r = new wxBoxSizer(wxHORIZONTAL);
+        r->Add(new wxStaticText(panel, wxID_ANY, _T("Folder:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        iw_img_path = new wxTextCtrl(panel, wxID_ANY, my_lisaconfig->iw_png_path);
+        r->Add(iw_img_path, 1, wxALIGN_CENTER_VERTICAL);
+        iw_img_path_b = new wxButton(panel, ID_PICK_IWDIR, wxT("Browse..."));
+        r->Add(iw_img_path_b, 0, wxLEFT, B);
+        g->Add(r, 0, wxEXPAND | wxALL, B);
 
+        page->Add(g, 0, wxEXPAND | wxALL, B);
+    }
+
+    panel->SetSizer(page);
     return panel;
 }
 

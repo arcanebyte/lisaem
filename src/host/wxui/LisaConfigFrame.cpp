@@ -31,6 +31,7 @@
 #include <wx/frame.h>
 #include <wx/panel.h>
 #include <wx/notebook.h>
+#include <wx/simplebook.h>
 
 #include "machine.h"
 
@@ -69,6 +70,8 @@ enum
 {
     ID_NOTEBOOK = 2001,
     ID_APPLY,
+    ID_SLOT_CARD,
+    ID_SLOT_PICK,
     ID_PICK_ROM,
     ID_PICK_DPROM,
     ID_PICK_KB_B,
@@ -100,6 +103,10 @@ EVT_NOTEBOOK_PAGE_CHANGING(ID_NOTEBOOK, LisaConfigFrame::OnNoteBook)
 EVT_BUTTON(ID_SERNO_INFO, LisaConfigFrame::OnSernoInfo)
 EVT_BUTTON(wxID_APPLY, LisaConfigFrame::OnApply)  // dialog Apply: commit, stay open
 EVT_BUTTON(wxID_OK, LisaConfigFrame::OnOK)        // dialog OK: commit & close
+// slot card dropdown: show/hide that slot's port config (also marks dirty)
+EVT_CHOICE(ID_SLOT_CARD, LisaConfigFrame::OnSlotCardChanged)
+// slot 1/2/3 selector: switch which slot the slotbook shows (navigation, not an edit)
+EVT_CHOICE(ID_SLOT_PICK, LisaConfigFrame::OnSlotPick)
 // any edit to a control marks the config dirty and re-enables Apply
 EVT_TEXT(wxID_ANY, LisaConfigFrame::OnControlChanged)
 EVT_CHECKBOX(wxID_ANY, LisaConfigFrame::OnControlChanged)
@@ -139,6 +146,14 @@ LisaConfigFrame::LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig)
     my_lisaconfig = lisaconfig;
     serialabox = NULL;
     serialbbox = NULL;
+    slotbook = NULL;
+    slotpick = NULL;
+    for (int s = 0; s < 4; s++)
+    {
+        sloton[s] = NULL;
+        slotports[s] = NULL;
+        slotempty[s] = NULL;
+    }
 
     pportopts[0] = wxT("ProFile");
     pportopts[1] = wxT("ADMP");
@@ -635,96 +650,120 @@ void LisaConfigFrame::ApplyChanges()
         connect_device_to_via(8, my_lisaconfig->s3l, &my_lisaconfig->s3lp, "/cardslot3/lowpath");
 }
 
-wxPanel *LisaConfigFrame::CreateSlotConfigPage(wxNotebook *parent, int slot)
+wxPanel *LisaConfigFrame::CreateSlotConfigPage(wxWindow *parent, int slot)
 {
-    int y = 10 * HIDPISCALE, ya = 50 * HIDPISCALE;
-
     if (slot < 1 || slot > 3)
         return NULL;
 
     wxPanel *panel = new wxPanel(parent);
+    wxBoxSizer *page = new wxBoxSizer(wxVERTICAL);
+    const int B = 6 * HIDPISCALE;
 
     wxString u, l, cu, cl, s;
-
     switch (slot)
     {
-    case 1:
-        s = my_lisaconfig->slot1;
-        u = my_lisaconfig->s1hp;
-        l = my_lisaconfig->s1lp;
-        cu = my_lisaconfig->s1h;
-        cl = my_lisaconfig->s1l;
-        break;
-    case 2:
-        s = my_lisaconfig->slot2;
-        u = my_lisaconfig->s2hp;
-        l = my_lisaconfig->s2lp;
-        cu = my_lisaconfig->s2h;
-        cl = my_lisaconfig->s2l;
-        break;
-    case 3:
-        s = my_lisaconfig->slot3;
-        u = my_lisaconfig->s3hp;
-        l = my_lisaconfig->s3lp;
-        cu = my_lisaconfig->s3h;
-        cl = my_lisaconfig->s3l;
-        break;
+    case 1: s = my_lisaconfig->slot1; u = my_lisaconfig->s1hp; l = my_lisaconfig->s1lp; cu = my_lisaconfig->s1h; cl = my_lisaconfig->s1l; break;
+    case 2: s = my_lisaconfig->slot2; u = my_lisaconfig->s2hp; l = my_lisaconfig->s2lp; cu = my_lisaconfig->s2h; cl = my_lisaconfig->s2l; break;
+    case 3: s = my_lisaconfig->slot3; u = my_lisaconfig->s3hp; l = my_lisaconfig->s3lp; cu = my_lisaconfig->s3h; cl = my_lisaconfig->s3l; break;
     }
 
-    sloton[slot] = new wxRadioBox(panel, wxID_ANY,
-                                  wxT("slot:"), wxPoint(10 * HIDPISCALE, y), wxDefaultSize, 2, slotcard, 1, wxRA_SPECIFY_COLS,
-                                  wxDefaultValidator, wxT("radioBox"));
-    y += ya;
-    y += ya;
-    if (s.IsSameAs(slotcard[0], false))
-        sloton[slot]->SetSelection(0);
-    else
-        sloton[slot]->SetSelection(1);
+    // ---- Installed card ------------------------------------------------
+    {
+        wxBoxSizer *cardrow = new wxBoxSizer(wxHORIZONTAL);
+        cardrow->Add(new wxStaticText(panel, wxID_ANY, _T("Card:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        sloton[slot] = new wxChoice(panel, ID_SLOT_CARD, wxDefaultPosition, wxDefaultSize, 2, slotcard);
+        sloton[slot]->SetSelection(s.IsSameAs(slotcard[0], false) ? 0 : 1);
+        cardrow->Add(sloton[slot], 0, wxALIGN_CENTER_VERTICAL);
+        page->Add(cardrow, 0, wxALL, B);
+    }
 
-    //----- upper slot -------------------------------------------------------------------------------------------------
+    // ---- Port config (shown only when a Dual-Parallel card is installed) ----
+    slotports[slot] = new wxPanel(panel);
+    wxBoxSizer *ports = new wxBoxSizer(wxVERTICAL);
 
-    pportboxh[slot] = new wxRadioBox(panel, wxID_ANY,
-                                     wxT("Upper Parallel Port: (Connector 2 in LOS)"), wxPoint(10 * HIDPISCALE, y), wxDefaultSize, 3, pportopts, 0, wxRA_SPECIFY_COLS,
-                                     wxDefaultValidator, wxT("radioBox"));
-    y += ya;
+    // Upper (Connector 2 in LOS)
+    {
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, slotports[slot], _T("Upper Parallel Port (Connector 2 in LOS)"));
+        pportboxh[slot] = new wxRadioBox(slotports[slot], wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize,
+                                         3, pportopts, 0, wxRA_SPECIFY_COLS);
+        if (cu.IsSameAs(_T("PROFILE"), false))   pportboxh[slot]->SetSelection(0);
+        else if (cu.IsSameAs(_T("ADMP"), false)) pportboxh[slot]->SetSelection(1);
+        else                                     pportboxh[slot]->SetSelection(2);
+        g->Add(pportboxh[slot], 0, wxALL, B);
 
-    // default to nothing for these.
-    if (cu.IsSameAs(_T("PROFILE"), false))
-        pportboxh[slot]->SetSelection(0);
-    else if (cu.IsSameAs(_T("ADMP"), false))
-        pportboxh[slot]->SetSelection(1);
-    else
-        pportboxh[slot]->SetSelection(2);
+        wxBoxSizer *r = new wxBoxSizer(wxHORIZONTAL);
+        r->Add(new wxStaticText(slotports[slot], wxID_ANY, _T("Disk image:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        m_text_propathh[slot] = new wxTextCtrl(slotports[slot], idth[slot], u);
+        r->Add(m_text_propathh[slot], 1, wxALIGN_CENTER_VERTICAL);
+        r->Add(new wxButton(slotports[slot], idbh[slot], wxT("Browse...")), 0, wxLEFT, B);
+        g->Add(r, 0, wxEXPAND | wxALL, B);
+        ports->Add(g, 0, wxEXPAND | wxBOTTOM, B);
+    }
 
-    m_text_propathh[slot] = new wxTextCtrl(panel, idth[slot], u, wxPoint(10, y), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE), 0);
-    (void)new wxButton(panel, idbh[slot], wxT("browse"), wxPoint(420 * HIDPISCALE, y), wxDefaultSize);
+    // Lower (Connector 1 in LOS)
+    {
+        wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, slotports[slot], _T("Lower Parallel Port (Connector 1 in LOS)"));
+        pportboxl[slot] = new wxRadioBox(slotports[slot], wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize,
+                                         3, pportopts, 0, wxRA_SPECIFY_COLS);
+        if (cl.IsSameAs(_T("PROFILE"), false))   pportboxl[slot]->SetSelection(0);
+        else if (cl.IsSameAs(_T("ADMP"), false)) pportboxl[slot]->SetSelection(1);
+        else                                     pportboxl[slot]->SetSelection(2);
+        g->Add(pportboxl[slot], 0, wxALL, B);
 
-    y += ya;
-    y += ya;
+        wxBoxSizer *r = new wxBoxSizer(wxHORIZONTAL);
+        r->Add(new wxStaticText(slotports[slot], wxID_ANY, _T("Disk image:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, B);
+        m_text_propathl[slot] = new wxTextCtrl(slotports[slot], idtl[slot], l);
+        r->Add(m_text_propathl[slot], 1, wxALIGN_CENTER_VERTICAL);
+        r->Add(new wxButton(slotports[slot], idbl[slot], wxT("Browse...")), 0, wxLEFT, B);
+        g->Add(r, 0, wxEXPAND | wxALL, B);
+        ports->Add(g, 0, wxEXPAND);
+    }
 
-    //----- lower slot --------------------------------------------------------------------------------------------------
+    slotports[slot]->SetSizer(ports);
+    page->Add(slotports[slot], 0, wxEXPAND | wxALL, B);
 
-    pportboxl[slot] = new wxRadioBox(panel, wxID_ANY,
-                                     wxT("Lower Parallel Port: (Connector 1 in LOS)"), wxPoint(10, y), wxDefaultSize, 3, pportopts, 0, wxRA_SPECIFY_COLS,
-                                     wxDefaultValidator, wxT("radioBox"));
-    y += ya;
+    // Placeholder shown instead of the port config when no card is installed.
+    slotempty[slot] = new wxStaticText(panel, wxID_ANY, _T("No card installed in this slot."),
+                                       wxDefaultPosition, wxDefaultSize, wxALIGN_CENTRE_HORIZONTAL);
+    slotempty[slot]->SetForegroundColour(wxColour(0x6e, 0x6e, 0x73));
+    page->Add(slotempty[slot], 0, wxEXPAND | wxALL, B * 3);
 
-    // default to nothing for these.
-    if (cl.IsSameAs(_T("PROFILE"), false))
-        pportboxl[slot]->SetSelection(0);
-    else if (cl.IsSameAs(_T("ADMP"), false))
-        pportboxl[slot]->SetSelection(1);
-    else
-        pportboxl[slot]->SetSelection(2);
-    // 20200320 bug?                         was  wxID_ANY v
-    m_text_propathl[slot] = new wxTextCtrl(panel, idtl[slot], l, wxPoint(10 * HIDPISCALE, y), wxSize(400 * HIDPISCALE, 30 * HIDPISCALE), 0);
-    (void)new wxButton(panel, idbl[slot], wxT("browse"), wxPoint(420 * HIDPISCALE, y), wxDefaultSize);
+    // Only meaningful with a card installed (slotcard[0] == "Dual Parallel").
+    bool installed = (sloton[slot]->GetSelection() == 0);
+    slotports[slot]->Show(installed);
+    slotempty[slot]->Show(!installed);
 
-    // idth - upper text field idbh - button upper
-    // using wxID_ANY for lower for some reason(why?), idbl - button lower line ~493
-
-
+    panel->SetSizer(page);
     return panel;
+}
+
+void LisaConfigFrame::UpdateSlotVisibility(int slot)
+{
+    if (slot < 1 || slot > 3 || !sloton[slot] || !slotports[slot])
+        return;
+    bool installed = (sloton[slot]->GetSelection() == 0); // slotcard[0] == "Dual Parallel"
+    if (slotports[slot]->IsShown() != installed)
+    {
+        slotports[slot]->Show(installed);
+        if (slotempty[slot])
+            slotempty[slot]->Show(!installed);
+        slotports[slot]->GetParent()->Layout();
+    }
+}
+
+void LisaConfigFrame::OnSlotCardChanged(wxCommandEvent &event)
+{
+    for (int s = 1; s <= 3; s++)
+        UpdateSlotVisibility(s);
+    SetApplyEnabled(true); // choosing a card counts as an edit
+    event.Skip();
+}
+
+void LisaConfigFrame::OnSlotPick(wxCommandEvent &event)
+{
+    // Just navigation between the three slot panels; not an edit.
+    if (slotbook)
+        slotbook->SetSelection(event.GetSelection());
 }
 
 wxPanel *LisaConfigFrame::CreateMainConfigPage(wxNotebook *parent)
@@ -1055,17 +1094,33 @@ void LisaConfigFrame::CreateNotebook(wxNotebook *parent)
 {
     wxPanel *panel1 = CreateMainConfigPage(parent);
     wxPanel *panel2 = CreatePortsConfigPage(parent);
-    wxPanel *panel3 = CreateSlotConfigPage(parent, 1);
-    wxPanel *panel4 = CreateSlotConfigPage(parent, 2);
-    wxPanel *panel5 = CreateSlotConfigPage(parent, 3);
+
+    // The three expansion slots share one tab: a compact "Slot 1/2/3" picker
+    // drives a simplebook holding the three slot panels.
+    const int B = 6 * HIDPISCALE;
+    wxPanel *slotsTab = new wxPanel(parent);
+    wxBoxSizer *sv = new wxBoxSizer(wxVERTICAL);
+
+    wxBoxSizer *pickrow = new wxBoxSizer(wxHORIZONTAL);
+    wxString slotnums[] = {wxT("Slot 1"), wxT("Slot 2"), wxT("Slot 3")};
+    slotpick = new wxChoice(slotsTab, ID_SLOT_PICK, wxDefaultPosition, wxDefaultSize, 3, slotnums);
+    slotpick->SetSelection(0);
+    pickrow->Add(slotpick, 0, wxALIGN_CENTER_VERTICAL);
+    sv->Add(pickrow, 0, wxALL, B);
+
+    slotbook = new wxSimplebook(slotsTab, wxID_ANY);
+    slotbook->AddPage(CreateSlotConfigPage(slotbook, 1), wxT("Slot 1"));
+    slotbook->AddPage(CreateSlotConfigPage(slotbook, 2), wxT("Slot 2"));
+    slotbook->AddPage(CreateSlotConfigPage(slotbook, 3), wxT("Slot 3"));
+    sv->Add(slotbook, 1, wxEXPAND | wxALL, B);
+    slotsTab->SetSizer(sv);
+
     wxPanel *panel6 = CreatePrinterConfigPage(parent);
 
-    parent->AddPage(panel1, wxT("config"), false, -1);
-    parent->AddPage(panel2, wxT("ports"), false, -1);
-    parent->AddPage(panel3, wxT("slot1"), false, -1);
-    parent->AddPage(panel4, wxT("slot2"), false, -1);
-    parent->AddPage(panel5, wxT("slot3"), false, -1);
-    parent->AddPage(panel6, wxT("print"), false, -1);
+    parent->AddPage(panel1, wxT("Machine"), false, -1);
+    parent->AddPage(panel2, wxT("Ports"), false, -1);
+    parent->AddPage(slotsTab, wxT("Slots"), false, -1);
+    parent->AddPage(panel6, wxT("Printer"), false, -1);
 
     parent->SetSelection(0);
 }

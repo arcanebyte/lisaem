@@ -94,11 +94,12 @@ enum
     ID_LOAD_PRAM
 };
 
-BEGIN_EVENT_TABLE(LisaConfigFrame, wxFrame)
+BEGIN_EVENT_TABLE(LisaConfigFrame, wxDialog)
 EVT_NOTEBOOK_PAGE_CHANGED(ID_NOTEBOOK, LisaConfigFrame::OnNoteBook)
 EVT_NOTEBOOK_PAGE_CHANGING(ID_NOTEBOOK, LisaConfigFrame::OnNoteBook)
 EVT_BUTTON(ID_SERNO_INFO, LisaConfigFrame::OnSernoInfo)
 EVT_BUTTON(ID_APPLY, LisaConfigFrame::OnApply)
+EVT_BUTTON(wxID_OK, LisaConfigFrame::OnApply) // dialog OK = apply & close
 EVT_BUTTON(ID_ZAP_PRAM, LisaConfigFrame::OnZapPram)
 EVT_BUTTON(ID_SAVE_PRAM, LisaConfigFrame::OnSavePram)
 EVT_BUTTON(ID_LOAD_PRAM, LisaConfigFrame::OnLoadPram)
@@ -126,10 +127,8 @@ const int idbl[4] = {0, ID_PICK_PROFILESB1L, ID_PICK_PROFILESB2L, ID_PICK_PROFIL
 
 // JD - Set the size of the frame here. Ideally 650x650.
 LisaConfigFrame::LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig)
-    : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(650 * HIDPISCALE, 650 * HIDPISCALE),
-              wxDEFAULT_FRAME_STYLE | wxCLIP_CHILDREN | //|wxNO_FULL_REPAINT_ON_RESIZE)
-                  wxMINIMIZE_BOX | wxMAXIMIZE_BOX | wxRESIZE_BORDER | wxSYSTEM_MENU | wxCAPTION |
-                  wxTAB_TRAVERSAL | wxCLOSE_BOX | wxNO_FULL_REPAINT_ON_RESIZE)
+    : wxDialog(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(650 * HIDPISCALE, 650 * HIDPISCALE),
+               wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxCLIP_CHILDREN)
 {
 
     my_lisaconfig = lisaconfig;
@@ -173,6 +172,14 @@ LisaConfigFrame::LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig)
     thenoteBook =
         new wxNotebook(this, ID_NOTEBOOK, wxDefaultPosition, wxSize(550, 650));
     CreateNotebook(thenoteBook);
+
+    // Stage 1: wrap the notebook + a native OK/Cancel button bar so this is a proper modal dialog.
+    wxBoxSizer *topsizer = new wxBoxSizer(wxVERTICAL);
+    topsizer->Add(thenoteBook, 1, wxEXPAND | wxALL, 6);
+    wxSizer *btnsizer = CreateButtonSizer(wxOK | wxCANCEL);
+    if (btnsizer)
+        topsizer->Add(btnsizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+    SetSizerAndFit(topsizer);
 }
 
 void LisaConfigFrame::OnNoteBook(wxNotebookEvent &WXUNUSED(event))
@@ -589,7 +596,7 @@ void LisaConfigFrame::OnApply(wxCommandEvent &WXUNUSED(event))
     if (!old_s3lp.IsSameAs(my_lisaconfig->s3lp) && wxFileExists(my_lisaconfig->s3lp))
         connect_device_to_via(8, my_lisaconfig->s3l, &my_lisaconfig->s3lp, "/cardslot3/lowpath");
 
-    Close();
+    EndModal(wxID_OK); // apply & close the modal dialog
 }
 
 wxPanel *LisaConfigFrame::CreateSlotConfigPage(wxNotebook *parent, int slot)

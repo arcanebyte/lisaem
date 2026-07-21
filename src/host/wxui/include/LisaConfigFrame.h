@@ -14,7 +14,7 @@
  * LisaConfig back to disc if it needs to.)
  */
 
-class LisaConfigFrame : public wxFrame
+class LisaConfigFrame : public wxDialog
 {
 public:
     LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig);

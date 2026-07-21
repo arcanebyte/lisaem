@@ -7551,7 +7551,7 @@ void LisaEmFrame::OnConfig(wxCommandEvent& WXUNUSED(event))
     }
 #endif
 
-    my_LisaConfigFrame->Show();
+    my_LisaConfigFrame->ShowModal();
     ALERT_LOG(0, "JD - in void LisaEmFrame::OnConfig and my_LisaConfigFrame->Show")
 }
 
@@ -10075,7 +10075,7 @@ int initialize_all_subsystems(void)
       // JD - Open the prefs window to set the ROM path
       EXTERMINATE(my_LisaConfigFrame);
       my_LisaConfigFrame = new LisaConfigFrame(wxT("Preferences"), my_lisaconfig);
-      my_LisaConfigFrame->Show();
+      my_LisaConfigFrame->ShowModal();
     }
     //JD - If we're here, then the ROM path wasn't set. I'd like to see this removed, though.
     //else

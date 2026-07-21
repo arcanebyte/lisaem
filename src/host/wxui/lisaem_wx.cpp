@@ -715,7 +715,9 @@ public:
   // Event handlers
   //    #ifdef __WXOSX__
   void OnQuit(wxCommandEvent &event);
+  void OnMenuQuit(wxCommandEvent &event); // user Quit: warn if the Lisa is still powered on
   void OnClose(wxCloseEvent &event);
+  bool confirm_quit_while_powered();      // true if OK to quit (off, or user forced)
 
   //    #endif
 
@@ -1066,7 +1068,7 @@ EVT_MENU(ID_PAUSE, LisaEmFrame::OnPause)
 
 // EVT_IDLE(LisaEmFrame::OnIdleEvent)
 EVT_TIMER(ID_EMULATION_TIMER, LisaEmFrame::OnEmulationTimer)
-EVT_MENU(wxID_EXIT, LisaEmFrame::OnQuit)
+EVT_MENU(wxID_EXIT, LisaEmFrame::OnMenuQuit)
 EVT_CLOSE(LisaEmFrame::OnClose)
 END_EVENT_TABLE()
 
@@ -1611,18 +1613,37 @@ void LisaWin::SetVideoMode(int mode)
 extern "C" void close_all_terminals(void);
 
 // if we close the LisaEm window and another window such as preferences or a terminal is open, we get segfault
+// Warn before quitting while the Lisa is still powered on: pulling the plug can
+// leave the guest OS's buffers / ProFile catalog mid-write and corrupt the disk.
+// Returns true if it's OK to proceed (machine is off, or the user chose to force).
+bool LisaEmFrame::confirm_quit_while_powered()
+{
+    if (!running) // 0 = off; 1 = running, 10 = paused both count as powered on
+        return true;
+
+    wxMessageDialog dlg(this,
+                        wxT("Quitting now is like pulling the power cord - unsaved work and "
+                            "disk changes may be lost.\n\n"
+                            "Shut the Lisa down from its desktop (or the power button) first."),
+                        wxT("The Lisa is still powered on"),
+                        wxYES_NO | wxNO_DEFAULT | wxICON_EXCLAMATION);
+    dlg.SetYesNoLabels(wxT("Force Power Off && Quit"), wxT("Cancel"));
+    return (dlg.ShowModal() == wxID_YES);
+}
+
+void LisaEmFrame::OnMenuQuit(wxCommandEvent& event)
+{
+    if (confirm_quit_while_powered())
+        OnQuit(event);
+}
+
 void LisaEmFrame::OnClose(wxCloseEvent& event)
 {
-    /*
-    if (my_LisaConfigFrame) // close any ConfigFrame
-       {
-         my_LisaConfigFrame->Hide();
-         my_LisaConfigFrame->Close();
-         delete my_LisaConfigFrame; my_LisaConfigFrame=NULL;
-         close_all_terminals();
-       }
-    Destroy();
-    */
+    if (!confirm_quit_while_powered())
+    {
+        event.Veto(); // user cancelled: keep the window (and the running Lisa) open
+        return;
+    }
     wxCommandEvent foo;
     OnQuit(foo);
 }

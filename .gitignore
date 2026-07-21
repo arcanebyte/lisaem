@@ -85,7 +85,6 @@ obj/build-warnings.txt
 **/built_by.h
 src/**/include/machine.h
 **/cpu68k/cpu68k-?.c
-**/def68k-*.h
 **/cpu68k/def68k
 **/cpu68k/gen68k
 **/obj/def68k

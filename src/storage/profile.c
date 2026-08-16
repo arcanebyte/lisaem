@@ -685,9 +685,11 @@ int profile_mount(char *filename, ProFileType *P)
         // We got an error, most-likely error 88, which means that the file is not in valid dc42 format.
         // Now open it as a raw profile image file.
         // Note: there is no way to validate here if the file is a valid raw profile image file. It if boots up, then it is.
+        // No popup here: profile_mount() runs at every startup and on every prefs Apply, so warning
+        // here would nag on each one. The user is told once, when they pick the image, by
+        // LisaConfigFrame::set_profile_path_checked(). A real failure below still reports itself.
         ALERT_LOG(0, "dc42_open() of file name %s returned error %d, the error message is:%s. Now will open the file in raw profile format ...", filename, i, P->DC42.errormsg);
         (void)file_name_len;
-        messagebox("Unable to identify disk format. Attempting to use the disk image.", "Raw disk image");
 
 #ifndef __MSVCRT__
         i = raw_profile_image_open(&P->DC42, filename, "wb");

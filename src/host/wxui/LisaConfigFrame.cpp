@@ -1200,8 +1200,8 @@ void LisaConfigFrame::OnPickDRom(wxCommandEvent &WXUNUSED(event))
         m_dprompath->SetValue(x.GetPath());
 }
 
-// Reject a floppy dc42 chosen for a ProFile slot. Raw/unknown (.image) is allowed here; the
-// "unable to identify disk format" note is shown later at mount time. Defined in libdc42 (DC42_KIND_FLOPPY==2).
+// Reject a floppy dc42 chosen for a ProFile slot. Raw/unknown (.image) is allowed here, with a
+// one-time note below - mount time stays silent about it. Defined in libdc42 (DC42_KIND_FLOPPY==2).
 extern "C" int dc42_classify_image(char *filename);
 
 // True if `path` is already set in another ProFile/Widget image field (not `except`).

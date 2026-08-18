@@ -469,8 +469,8 @@ void read_port_if_ready_shell(unsigned int port)
     return;
   if (port == 0 && (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp < SCC_MIN_CYCLES_BETWEEN_READS))
     return;
-  int data = read_serial_port_shell(port);
-  if (data > -1)
+  char data = read_serial_port_shell(port);
+  if (data != -1)
   {
     if (port == 0)
     {
@@ -498,8 +498,8 @@ void read_port_if_ready_pty(unsigned int port)
     return;
   if (port == 0 && (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp < SCC_MIN_CYCLES_BETWEEN_READS))
     return;
-  int data = read_serial_port_pty(port);
-  if (data > -1)
+  char data = read_serial_port_pty(port);
+  if (data != -1)
   {
     if (port == 0)
     {
@@ -538,8 +538,8 @@ void read_port_if_ready_tty(unsigned int port)
     return;
   if (port == 0 && (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp < SCC_MIN_CYCLES_BETWEEN_READS))
     return;
-  int data = read_serial_port_tty(port);
-  if (data > -1)
+  char data = read_serial_port_tty(port);
+  if (data != -1)
   {
     if (port == 0)
     {
@@ -564,8 +564,8 @@ void read_port_if_ready_telnetd(unsigned int port)
     return;
   if (port == 0 && (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp < SCC_MIN_CYCLES_BETWEEN_READS))
     return;
-  int data = poll_telnet_serial_read(port);
-  if (data > -1)
+  char data = poll_telnet_serial_read(port);
+  if (data != -1)
   {
     if (port == 0)
     {
@@ -721,7 +721,8 @@ void initialize_scc(int actual)
       break;
 
     case SCC_PTY:
-      scc_fn[port].read_serial_port = read_serial_port_pty;
+      // "read_serial_port" is never invoked. TO DO: clean up this unused code:
+      //scc_fn[port].read_serial_port = read_serial_port_pty;
       scc_fn[port].write_serial_port = write_serial_port_pty;
       scc_fn[port].read_port_if_ready = read_port_if_ready_pty;
       scc_fn[port].set_dtr = set_dtr_pty;

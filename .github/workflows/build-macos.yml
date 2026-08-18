@@ -17,7 +17,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Check-out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: List the checked out LisaEm files (the top folder only)
         run: ls -la .
@@ -55,7 +55,7 @@ jobs:
           echo "ARTIFACT_PATH=$MACOS_PKG_FILENAME" >> $GITHUB_ENV
           
       - name: Upload the artifact file
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-artifact
           path: ${{ env.ARTIFACT_PATH }}

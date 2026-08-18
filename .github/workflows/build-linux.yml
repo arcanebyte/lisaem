@@ -28,7 +28,7 @@ jobs:
         run: git config --global core.autocrlf input
       
       - name: Check-out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: List the checked out LisaEm files (the top folder only)
         run: ls -la .
@@ -99,7 +99,7 @@ jobs:
           fi
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-artifact
           path: ${{ env.ARTIFACT_PATHS }}

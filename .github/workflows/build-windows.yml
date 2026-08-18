@@ -34,7 +34,7 @@ jobs:
         run: git config --global core.autocrlf input
 
       - name: Check-out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Cygwin
         uses: cygwin/cygwin-install-action@master
@@ -72,7 +72,7 @@ jobs:
         shell: cmd
         
       - name: Upload the artifact file
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-artifact
           path: "pkg/LisaEm-${{ inputs.version_in_file_name }}-Windows_x86_64.zip"

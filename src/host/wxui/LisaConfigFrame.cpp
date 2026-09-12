@@ -218,16 +218,10 @@ LisaConfigFrame::LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig)
 
 void LisaConfigFrame::OnNoteBook(wxNotebookEvent &WXUNUSED(event))
 {
-    // The LisaTest loopback adapter attaches to both serial ports at once.
-    // if one is set to loopback so, must the other follow.
-    if (!serialabox || !serialbbox)
-        return;
-
-    if (serialabox->GetSelection() == 1 || serialbbox->GetSelection() == 1)
-    {
-        serialabox->SetSelection(1);
-        serialbbox->SetSelection(1);
-    }
+    // Nothing to do on page changes. The loopback pairing of the serial ports is
+    // handled when a port is set to Loopback (OnSerialChanged) and when one is
+    // moved off Loopback (ApplyChanges). Forcing both ports to Loopback here would
+    // silently undo a port that was just moved off Loopback before it is applied.
 }
 
 extern "C" uint8 floppy_ram[2048];
@@ -570,6 +564,24 @@ void LisaConfigFrame::ApplyChanges()
     }
 
     // --- ports ------------------------------------------------------------
+    // The LisaTest loopback adapter connects both serial ports, so Loopback is valid
+    // only on both ports or neither. Setting one port to Loopback already syncs the
+    // other (OnSerialChanged), so a mismatch here means a port was moved off Loopback:
+    // move the other port to Nothing, otherwise power-on would force both back to
+    // Loopback. "Nothing" is index 0 and "Loopback" index 1 in nothingonly and serportopts.
+    if ((serialabox->GetSelection() == 1) != (serialbbox->GetSelection() == 1))
+    {
+        bool a_is_loopback = (serialabox->GetSelection() == 1);
+        wxMessageBox(a_is_loopback ? _T("Serial Port B is no longer set to Loopback.\n\n"
+                                        "The LisaTest loopback adapter connects both serial ports, "
+                                        "so Serial Port A has been set to Nothing.")
+                                   : _T("Serial Port A is no longer set to Loopback.\n\n"
+                                        "The LisaTest loopback adapter connects both serial ports, "
+                                        "so Serial Port B has been set to Nothing."),
+                     _T("Loopback"), wxOK | wxICON_INFORMATION, this);
+        (a_is_loopback ? serialabox : serialbbox)->SetSelection(0);
+    }
+
     my_lisaconfig->serial1_setting = serportopts[serialabox->GetSelection()];
     my_lisaconfig->serial2_setting = serportopts[serialbbox->GetSelection()];
     my_lisaconfig->serial1_param = serialaparam->GetValue();

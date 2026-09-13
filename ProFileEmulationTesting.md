@@ -40,7 +40,8 @@ This file tracks testing of the `profile-emulation` branch. The branch replaces 
 | Lisa Office System 2 | built-in | Boots |
 | Lisa Office System 3.1 | built-in | Boots with I/O ROM 88, on this branch (HLE removed) and on `master` alike. With another I/O ROM it stops with system error 10738 on both builds. |
 | Xenix (10 MB ProFile) | built-in | Works with I/O ROM A8 (Xenix no longer gets its fake BSY/CA1 interrupt flags). Does not boot with I/O ROM 88; not yet checked on `master`, reinstall pending. |
-| MacWorks | built-in | Hangs at "Loading......." on both this branch and `master`, with either I/O ROM. Not a regression; the install is being redone. |
+| MacWorks XL 3.0 | built-in | Boots from the ProFile after a clean install. The earlier hangs and sad Mac `0F0064` ("couldn't read System file") came from an install without the System Folder, and failed the same way on `master` and on the December 2025 build `eb9c325`. |
+| MacWorks 1.1h (boot floppy, no parallel devices) | — | Hangs at "Loading......." on `master` and on this branch; one boot on the branch instead stopped LisaEm with a CPU-core or MMU abort. The December 2025 build `eb9c325` also aborts (bus error with the vector table overwritten by `$39393939`), so it predates this branch. Not investigated further. |
 
 A "read error" on `/dev/p0e` along the way turned out to be the kernel's own partition table (entry e was `{0, 0}` in `pro.c`), not the emulation. The disk image checked out clean block by block.
 
@@ -60,7 +61,7 @@ Before this branch, the rebuilt UniPlus kernels failed every boot. They hit `ASS
 3. **Other OSes, on the built-in port and on a slot card where supported:**
    - Lisa Office System 1.x/2.x, including installing from floppies
    - Pascal Workshop
-   - MacWorks XL / MacWorks Plus (retest after a fresh install)
+   - MacWorks XL 3.0: a clean install done on this branch (the boot so far used a disk installed on an older build), and MacWorks Plus
    - Xenix. Its UniPlus/Xenix CA1 fakes were removed, and Xenix relies on T2 one-shot behaviour.
    - UniPlus sunix 1.1
    - LisaTest's ProFile tests

@@ -607,21 +607,31 @@ ACGLOBAL(uint8, highest_bit_val_inv[],
 // if all are cleared, clear bit 7 else set it
 // if (via[2].via[IER] & via[2].via[IFR] & 0x7f) via[2].via[IFR] |=0x80; // if any actively on, bit 7 is on.
 
-#define FIX_VIA_IFR(vianum)         \
-  {                                 \
-    if (via[vianum].via[IFR] & 127) \
-      via[vianum].via[IFR] |= 128;  \
-    else                            \
-      via[vianum].via[IFR] = 0;     \
-  }
+// IFR bit 7 is set only while an enabled flag is set: IFR & IER, as on the 6522.  Parallel port VIAs.
+#define FIX_VIA_IFR(vianum)                                            \
+    {                                                                  \
+        if (via[vianum].via[IFR] & via[vianum].via[IER] & 127)         \
+            via[vianum].via[IFR] |= 128;                               \
+        else                                                           \
+            via[vianum].via[IFR] &= 127;                               \
+    }
 
-#define FIX_VIAP_IFR()     \
-  {                        \
-    if (V->via[IFR] & 127) \
-      V->via[IFR] |= 128;  \
-    else                   \
-      V->via[IFR] = 0;     \
-  }
+#define FIX_VIAP_IFR()                          \
+    {                                           \
+        if (V->via[IFR] & V->via[IER] & 127)    \
+            V->via[IFR] |= 128;                 \
+        else                                    \
+            V->via[IFR] &= 127;                 \
+    }
+
+// the COPS VIA's original version: bit 7 set whenever any flag is set
+#define FIX_VIA_IFR_COPS(vianum)         \
+    {                                    \
+        if (via[vianum].via[IFR] & 127)  \
+            via[vianum].via[IFR] |= 128; \
+        else                             \
+            via[vianum].via[IFR] = 0;    \
+    }
 
 #define IS_PARALLEL_PORT_ENABLED(vianum) (profile_power & (1 << (vianum - 2)))
 

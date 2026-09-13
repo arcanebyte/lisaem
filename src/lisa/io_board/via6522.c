@@ -37,20 +37,30 @@
 #define PROLOOP_EV_ORB 3 // event=3 <- write to ORB
 #define PROLOOP_EV_NUL 4 // event=4 <- null event - called occasionally by event handling to allow timeouts
 
-#define FIX_VIA_IFR(vianum)              \
+// IFR bit 7 is set only while an enabled flag is set: IFR & IER, as on the 6522.  Parallel port VIAs.
+#define FIX_VIA_IFR(vianum)                                            \
+    {                                                                  \
+        if (via[vianum].via[IFR] & via[vianum].via[IER] & 127)         \
+            via[vianum].via[IFR] |= 128;                               \
+        else                                                           \
+            via[vianum].via[IFR] &= 127;                               \
+    }
+
+#define FIX_VIAP_IFR()                          \
+    {                                           \
+        if (V->via[IFR] & V->via[IER] & 127)    \
+            V->via[IFR] |= 128;                 \
+        else                                    \
+            V->via[IFR] &= 127;                 \
+    }
+
+// the COPS VIA's original version: bit 7 set whenever any flag is set
+#define FIX_VIA_IFR_COPS(vianum)         \
     {                                    \
         if (via[vianum].via[IFR] & 127)  \
             via[vianum].via[IFR] |= 128; \
         else                             \
             via[vianum].via[IFR] = 0;    \
-    }
-
-#define FIX_VIAP_IFR()          \
-    {                           \
-        if (V->via[IFR] & 127)  \
-            V->via[IFR] |= 128; \
-        else                    \
-            V->via[IFR] = 0;    \
     }
 
 // clear CA1/CA2 on ORA/IRA (register 1) access, as the 6522 does: CA1 always, CA2 unless it is
@@ -1625,7 +1635,7 @@ void lisa_wb_Oxdc00_cops_via1(uint32 addr, uint8 xvalue)
     case IFR1:                                       /* IFR  */
         via[1].via[IFR] &= (0x7f ^ (xvalue & 0x7f)); // 1 writes to IFR are used to clear bits!
         via[1].last_port = port;
-        FIX_VIA_IFR(1);
+        FIX_VIA_IFR_COPS(1);
 
         DEBUG_LOG(0, "VIA1 IFR Write:%02x::%s %s %s %s %s %s %s %s\n", xvalue,
                   (xvalue & VIA_IRQ_BIT_CA2) ? "CA2" : "",
@@ -1817,7 +1827,7 @@ uint8 lisa_rb_Oxdc00_cops_via1(uint32 addr)
                       (via[1].via[IFR] & VIA_IRQ_BIT_SET_CLR_ANY) ? "ANY:on" : "ANY:off");
 #endif
 
-        FIX_VIA_IFR(1);
+        FIX_VIA_IFR_COPS(1);
         return via[1].via[IFR];
 
     case IER1:
@@ -3506,10 +3516,7 @@ void lisa_wb_ext_2par_via(ViaType *V, uint32 addr, uint8 xvalue)
         V->via[IFR] &= ~(xvalue); // 1 writes to IFR are used to clear bits!
         V->last_port = port;
 
-        if (V->via[IFR] & 127)
-            V->via[IFR] |= 128; // if all are cleared, clear bit 7 else set it
-        else
-            V->via[IFR] = 0;
+        FIX_VIAP_IFR(); // bit 7 = any enabled flag set
 
         DEBUG_LOG(0, "IFR write bits: %s %s %s %s %s %s %s %s",
                   (V->via[IFR] & 1) ? "ifr0CA2:on" : "ifr0CA2:off",
@@ -3532,10 +3539,7 @@ void lisa_wb_ext_2par_via(ViaType *V, uint32 addr, uint8 xvalue)
             V->via[IER] &= (0x7f ^ (xvalue & 0x7f));
 
         // IER only masks: flags stay latched in IFR.  An enabled flag interrupts right away.
-        if (V->via[IFR] & 127)
-            V->via[IFR] |= 128; // if all are cleared, clear bit 7 else set it
-        else
-            V->via[IFR] = 0;
+        FIX_VIAP_IFR(); // bit 7 = any enabled flag set
 
         V->last_port = port;
         via_irq_check_now(V->vianum);

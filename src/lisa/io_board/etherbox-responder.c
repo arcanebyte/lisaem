@@ -351,6 +351,7 @@ EtherBoxBackend *etherbox_responder_open(void)
     be->name = "responder";
     be->send = rsp_send;
     be->recv = rsp_recv;
+    be->poll = NULL;
     be->close = rsp_close;
     be->ctx = r;
     return be;

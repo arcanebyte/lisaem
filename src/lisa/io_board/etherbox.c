@@ -323,9 +323,9 @@ static void eb_null_send(EtherBoxBackend *be, const uint8 *frame, int len)
     UNUSED(len);
 }
 
-static EtherBoxBackend eb_null_backend = {"none", eb_null_send, NULL, NULL, NULL};
+static EtherBoxBackend eb_null_backend = {"none", eb_null_send, NULL, NULL, NULL, NULL};
 
-// LISAEM_ETHERBOX_BACKEND picks the backend: "none" (the default) or "responder"
+// LISAEM_ETHERBOX_BACKEND picks the backend: "none" (the default), "responder" or "slirp"
 static EtherBoxBackend *eb_open_backend(void)
 {
     const char *e = getenv("LISAEM_ETHERBOX_BACKEND");
@@ -333,6 +333,8 @@ static EtherBoxBackend *eb_open_backend(void)
 
     if (e && !strcmp(e, "responder"))
         be = etherbox_responder_open();
+    else if (e && !strcmp(e, "slirp"))
+        be = etherbox_slirp_open();
     else if (e && *e && strcmp(e, "none"))
         ALERT_LOG(0, "EtherBox: unknown backend %s, using none", e);
     return be ? be : &eb_null_backend;
@@ -735,6 +737,8 @@ void etherbox_timer(EtherBoxType *eb)
     if (eb->poll_e && eb->poll_e <= cpu68k_clocks)
     {
         eb->poll_e = 0;
+        if (eb->backend->poll)
+            eb->backend->poll(eb->backend);
         eb_poll_backend(eb);
         eb_schedule(eb, &eb->poll_e, EB_POLL_INTERVAL);
     }

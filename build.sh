@@ -454,6 +454,16 @@ for j in $@; do
  --quiet*|--stfu|-q)
             export QUIET="YES"                                       ;;
 
+ --slirp*)  # --with-slirp[=PREFIX]: EtherBox network backend; PREFIX defaults to Homebrew's libslirp
+            SLIRPPREFIX="${opt#--slirp}"; SLIRPPREFIX="${SLIRPPREFIX#=}"
+            [[ -z "$SLIRPPREFIX" ]] && SLIRPPREFIX="$(brew --prefix libslirp 2>/dev/null)"
+            if [[ ! -f "$SLIRPPREFIX/include/slirp/libslirp.h" ]]; then
+               echo "Could not find libslirp.h under '$SLIRPPREFIX' (brew install libslirp, or --with-slirp=PREFIX)" 1>&2
+               exit 5
+            fi
+            export WITHSLIRP="-DHAVE_LIBSLIRP -I$SLIRPPREFIX/include/slirp"
+            export SLIRPLIBS="-L$SLIRPPREFIX/lib -lslirp"            ;;
+
  *)         UNKNOWNOPT="$UNKNOWNOPT $j"                              ;;
  esac
 
@@ -486,6 +496,7 @@ Options:                (can skip '--with-', or use '--no-' instead of '--withou
 --drmemory              Same as debug but runs drmemory instead of gdb/lldb
 --no-color-warn         don't record color ESC codes in compiler warnings
 --no-tools              don't compile dc42 tool commands
+--with-slirp[=PREFIX]   EtherBox networking through libslirp (default: Homebrew's)
 --with-static           Enables a static compile
 --without-static        Enables shared library compile (not recommended)
 --without-optimize      Disables optimizations
@@ -545,6 +556,7 @@ export  PHASE1LIST="\
         src/lisa/io_board/via6522         \
         src/lisa/io_board/etherbox        \
         src/lisa/io_board/etherbox-responder \
+        src/lisa/io_board/etherbox-slirp  \
         src/lisa/cpu_board/irq            \
         src/lisa/cpu_board/mmu            \
         src/lisa/cpu_board/rom            \
@@ -604,6 +616,7 @@ needclean=0
 [[ "$THIRTYTWOITS" != "$LASTTHIRTYTWOBITS"  ]] && needclean=1 #&& echo "Clean Needed: THIRTYTWOBITS Changed" 1>&2
 [[ "$LASTWHICHWXCONFIG" != "$WHICHWXCONFIG" ]] && needclean=1 #&& echo "Clean Needed: WHICHWXCONFIG Changed" 1>&2
 [[ "$LASTARCH" != "$ARCH"                   ]] && needclean=1 #&& echo "Clean Needed: ARCH Changed" 1>&2
+[[ "$LASTSLIRP" != "$WITHSLIRP"             ]] && needclean=1 #&& echo "Clean Needed: WITHSLIRP Changed" 1>&2
 # display mode changes affect only the main executable, mark it for recomoilation
 if [[ "$WITHBLITS" != "$LASTBLITS" ]]; then
   # rm -rf ./lisa/lisaem_wx.o ./lisa/lisaem ./lisa/lisaem.exe ./lisa/${SOFTWARE}.app;
@@ -618,11 +631,12 @@ LASTTHIRTYTWOBITS="$THIRTYTWOBITS"
 LASTSIXTYFOURBITS="$SIXTYFOURBITS" 
 LASTWHICHWXCONFIG="$WHICHWXCONFIG"
 LASTARCH="$ARCH"
+LASTSLIRP="$WITHSLIRP"
 ENDLAST
 
 [[ "$needclean" -gt 0 ]] && CLEAN
 
-export CFLAGS="$CFLAGS $NOWARNFORMATTRUNC $NOUNKNOWNWARNING $EXTRADEFINES"
+export CFLAGS="$CFLAGS $NOWARNFORMATTRUNC $NOUNKNOWNWARNING $EXTRADEFINES $WITHSLIRP"
 export CPPFLAGS="$CPPFLAGS $NODEPRECATEDCPY $NOWARNFORMATTRUNC $NOUNKNOWNWARNING $EXTRADEFINES"
 export CXXFLAGS="$CXXFLAGS $NODEPRECATEDCPY $NOWARNFORMATTRUNC $NOUNKNOWNWARNING $EXTRADEFINES" 
 #2020.01.14 - ^ GCC 9.2.1 throws these on wxWidgets includes, which I'm not going to fix.
@@ -834,7 +848,7 @@ export PERCENTPROCESS=97 PERCENTCEILING=98 PERCENTJOB=0 NUMJOBSINPHASE=1
 update_progress_bar $PERCENTPROCESS $PERCENTJOB $NUMJOBSINPHASE $PERCENTCEILING
 waitqall
 qjob  "!!* Linked ./bin/${LISANAME}" $CXX $ARCH $GUIAPP $GCCSTATIC $WITHTRACE $WITHDEBUG -o bin/$LISANAME  $LIST1 $LIST src/lib/libGenerator/lib/libGenerator.a src/lib/TerminalWx/lib/terminalwx.a \
-      src/lib/libdc42/lib/libdc42.a  $LINKOPTS $SYSLIBS $LIBS
+      src/lib/libdc42/lib/libdc42.a  $LINKOPTS $SYSLIBS $LIBS $SLIRPLIBS
 waitqall
 
 export COMPILEPHASE="pack/install"

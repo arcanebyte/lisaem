@@ -607,21 +607,31 @@ ACGLOBAL(uint8, highest_bit_val_inv[],
 // if all are cleared, clear bit 7 else set it
 // if (via[2].via[IER] & via[2].via[IFR] & 0x7f) via[2].via[IFR] |=0x80; // if any actively on, bit 7 is on.
 
-#define FIX_VIA_IFR(vianum)         \
-  {                                 \
-    if (via[vianum].via[IFR] & 127) \
-      via[vianum].via[IFR] |= 128;  \
-    else                            \
-      via[vianum].via[IFR] = 0;     \
-  }
+// IFR bit 7 is set only while an enabled flag is set: IFR & IER, as on the 6522.  Parallel port VIAs.
+#define FIX_VIA_IFR(vianum)                                            \
+    {                                                                  \
+        if (via[vianum].via[IFR] & via[vianum].via[IER] & 127)         \
+            via[vianum].via[IFR] |= 128;                               \
+        else                                                           \
+            via[vianum].via[IFR] &= 127;                               \
+    }
 
-#define FIX_VIAP_IFR()     \
-  {                        \
-    if (V->via[IFR] & 127) \
-      V->via[IFR] |= 128;  \
-    else                   \
-      V->via[IFR] = 0;     \
-  }
+#define FIX_VIAP_IFR()                          \
+    {                                           \
+        if (V->via[IFR] & V->via[IER] & 127)    \
+            V->via[IFR] |= 128;                 \
+        else                                    \
+            V->via[IFR] &= 127;                 \
+    }
+
+// the COPS VIA's original version: bit 7 set whenever any flag is set
+#define FIX_VIA_IFR_COPS(vianum)         \
+    {                                    \
+        if (via[vianum].via[IFR] & 127)  \
+            via[vianum].via[IFR] |= 128; \
+        else                             \
+            via[vianum].via[IFR] = 0;    \
+    }
 
 #define IS_PARALLEL_PORT_ENABLED(vianum) (profile_power & (1 << (vianum - 2)))
 
@@ -638,6 +648,7 @@ ACGLOBAL(uint8, highest_bit_val_inv[],
 #define CYCLE_TIMER_VIAn_T1_TIMER(x) ((x))
 #define CYCLE_TIMER_VIAn_T2_TIMER(x) ((x) + 128)
 #define CYCLE_TIMER_VIAn_SHIFTREG(x) ((x) + 64)
+#define CYCLE_TIMER_VIAn_CA1(x) ((x) + 32) // end of the busy period of the ProFile on this VIA
 
 #define CYCLE_TIMER_VIA1_T1_TIMER (1)
 #define CYCLE_TIMER_VIA1_T2_TIMER (1 + 128)
@@ -741,14 +752,13 @@ GLOBAL(uint8, *lisaram, NULL); // pointer to Lisa RAM
 // this enables a hack that tricks the lisa into skipping the full ram test, thus speeding up
 // the boot process - this sets a PRAM variable saying RAM test is done.
 GLOBAL(int, cheat_ram_test, 1);       // careful if we change the type of this: `extern "C" float hidpi_scale;` in LisaConfigFrame.cpp also
-DECLARE(int, hle);                    // flag to enable HLE hacks
 GLOBAL(uint32, bootblockchecksum, 0); // checksum of bootsector (sector 0) whether from profile or floppy.
 DECLARE(int, macworks4mb);
 DECLARE(int, consoletermwindow);           // preference: enable TerminalWx window for console terminal (UniPlux, LPW, Xenix, etc.)
 GLOBAL(int, romless, 0);                   // are we romless?
 GLOBAL(int, xenix_patch, 1);               // 2022.03.06 flag to signal Xenix HLE patches
 GLOBAL(int, macworks_hle, 1);              // 2025.12.27 this flag is no-longer used. See https://github.com/arcanebyte/lisaem/issues/40
-GLOBAL(int, los31_hle, 1);                 // 2021.04.14 flag to signal LOS 3.1 has been patched for HLE
+GLOBAL(int, los31_hle, 1);                 // 2026.09.13 this flag is no-longer used: the LOS 3.1 ProFile HLE was removed
 GLOBAL(int, monitor_patch, 1);             // 2022.03.06 flag to signal Monitor 12.x has been patched for HLE
 GLOBAL(int, uniplus_hacks, 1);             // 2021.03.05 flag to signal that UniPlus has been patched for profile handshaking
 GLOBAL(int, uniplus_loader_patch, 1);      // 2021.03.17 flag to signal that UniPlus boot loader has been patched for profile handshaking
@@ -818,11 +828,12 @@ typedef struct
   // DC42 contains the ProFilename and file handler
   // char  ProFileFileName[FILENAME_MAX]; // the file name for this Profile disk image to open;
 
-  XTIMER clock_e;     // used for timeouts - this is in relation to cpu68k_clocks
+  XTIMER clock_e;     // end of the drive's busy period in cpu68k_clocks, 0 when not busy (scheduled by irq.c)
   XTIMER alarm_len_e; // used for timeouts - how long was the delay set for in clock_e event expiration
 
   int vianum;
   uint16 last_cmd;
+  uint8 reply; // handshake reply byte the drive last put on the bus: $01, $02-$04 or $06
 } ProFileType;
 
 typedef struct
@@ -1879,6 +1890,11 @@ extern void get_profile_spare_table(ProFileType *P);
 #define PROLOOP_EV_ORA 2 // event=2 <- write to ORA
 #define PROLOOP_EV_ORB 3 // event=3 <- write to ORB
 #define PROLOOP_EV_NUL 4 // event=4 <- null event - called occasionally by event handling to allow timeouts
+#define PROLOOP_EV_IRA_NOSTROBE 5 // event=5 <- read IRA without /PSTRB (register 15, or CA2 not in handshake/pulse mode)
+#define PROLOOP_EV_ORA_NOSTROBE 6 // event=6 <- write ORA without /PSTRB (register 15, DDRA change, or CA2 not in handshake/pulse mode)
+#define PROLOOP_EV_STROBE 7       // event=7 <- /PSTRB from PCR (CA2 manual output taken from low to high)
+
+extern void profile_schedule_event(ProFileType *P, XTIMER delay);
 
 /****** Video ***********/
 

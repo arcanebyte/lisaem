@@ -230,91 +230,6 @@ void uniplus_set_partition_table_size(uint32 disk, uint32 sswap, uint32 rroot, i
   addr += 8;
 }
 
-void hle_los31_read(uint32 count)
-{
-  ProFileType *P = NULL;
-  int vianum = get_vianum_from_addr(A2);
-  if (vianum > 1 && vianum < 9)
-    P = via[vianum].ProFile;
-  else
-  {
-    ALERT_LOG(0, "Got insane via #%d A2:%08x", vianum, A2);
-    return;
-  }
-
-  int blocknumber = (P->DataBlock[5] << 16) | (P->DataBlock[6] << 8) | (P->DataBlock[7]);
-  ALERT_LOG(0, "HLE LOS31 via:%d cmd:%d block:%d idxread:%d count:%d  PC:%08x A0:%08x", vianum, P->DataBlock[4], blocknumber, P->indexread, count, PC, A0);
-
-  uint8 r = 0;
-  uint32 e = D1;
-
-  for (uint32 i = 0; i <= count; i++)
-  {
-    r = P->DataBlock[P->indexread++];
-    e ^= r;
-    lisa_wb_ram(A0, r);
-    A0++;
-  }
-
-  D0 = r;
-  D1 = e;
-
-  cpu68k_clocks += (count * (8 + 4 + 8 + 10)); // this will be off for the 8x loop.
-  D2 |= 0x0000ffff;                            // after DBRA.W D2 is -1
-
-  RTS;
-
-  ALERT_LOG(0, "Returning HLE LOS31 via:%d cmd:%d block:%d idxread:%d count:%d pc:%08x A0:%08x D1:%08x", vianum, P->DataBlock[4], blocknumber, P->indexread, count,
-            PC, A0, D1);
-}
-
-void hle_los31_write(void)
-{
-  ProFileType *P = NULL;
-  int vianum = get_vianum_from_addr(A2);
-  if (vianum > 1 && vianum < 9)
-    P = via[vianum].ProFile;
-  else
-    return;
-
-  for (int i = 0; i < 128; i++)
-  {
-    P->DataBlock[P->indexwrite++] = fetchbyte(A0);
-    A0++; // MOVE.B     (A0)+,(A2)
-    P->DataBlock[P->indexwrite++] = fetchbyte(A0);
-    A0++; // MOVE.B     (A0)+,(A2)
-    P->DataBlock[P->indexwrite++] = fetchbyte(A0);
-    A0++; // MOVE.B     (A0)+,(A2)
-    P->DataBlock[P->indexwrite++] = fetchbyte(A0);
-    A0++; // MOVE.B     (A0)+,(A2)
-  }
-
-  cpu68k_clocks += ((12 + 12 + 4 + 12 + 4 + 12 + 4 + 12 + 10) * 128 + 20);
-  D0 |= 0x0000ffff; // d0.w=-1 after dbra
-  RTS;
-}
-
-void hle_los31_write_00c08d0a(void)
-{
-  ProFileType *P = NULL;
-  int vianum = get_vianum_from_addr(A2);
-  if (vianum > 1 && vianum < 9)
-    P = via[vianum].ProFile;
-  else
-    return;
-
-  A1++; // a1 ++
-  P->DataBlock[P->indexwrite++] = fetchbyte(A1);
-  A1++; // fetchbyte(A1++) should but does not work right because we want to pass A1 before incrementing it
-  P->DataBlock[P->indexwrite++] = fetchbyte(A1);
-  A1++;
-  P->DataBlock[P->indexwrite++] = fetchbyte(A1);
-  A1++;
-
-  RTS;
-  cpu68k_clocks += (8 + 12 + 4 + 12 + 4 + 20);
-}
-
 // We no-longer do MacWorksXL3.0 hacks. See more at https://github.com/arcanebyte/lisaem/issues/40
 // void hle_macws_read_unused(uint32 count)
 // {
@@ -434,63 +349,6 @@ void hle_los31_write_00c08d0a(void)
 
 //   macworks_hle = 0;
 // }
-
-void hle_los_intercept(void)
-{
-
-  if (PC == 0x00c08a86)
-  {
-    ALERT_LOG(0, "511");
-    hle_los31_read(511);
-    return;
-  }
-  if (PC == 0x00c08a2e)
-  {
-    ALERT_LOG(0, "D2");
-    hle_los31_read(D2);
-    return;
-  }
-  if (PC == 0x00c08d0a)
-  {
-    ALERT_LOG(0, "c08d0a");
-    hle_los31_write_00c08d0a();
-    return;
-  }
-  if (PC == 0x00c08c86)
-  {
-    ALERT_LOG(0, "write");
-    hle_los31_write();
-    return;
-  }
-
-  ALERT_LOG(0, "UNHANDLED LOS31 HLE at %d/%08x", context, PC);
-}
-
-void apply_los31_hacks(void)
-{
-  if (!los31_hle)
-    return;
-
-  if (check_running_lisa_os() != LISA_OFFICE_RUNNING || context != 1)
-    return;
-
-  if (lisa_rw_ram(0x00c08a86) == 0x743f && lisa_rl_ram(0x00c08a88) == 0x1012b101 && lisa_rl_ram(0x00c08a88 + 4) == 0x10c01012)
-  {
-
-    lisa_ww_ram(0x00c08a86, 0xf33d); // read 512
-    lisa_ww_ram(0x00c08a2e, 0xf33d); // read 1x
-    lisa_ww_ram(0x00c08d0a, 0xf33d); // write 3x
-    lisa_ww_ram(0x00c08c86, 0xf33d); // write 512
-
-    ALERT_LOG(0, "#  # #    #### Patching for LOS3.1 ProFile");
-    ALERT_LOG(0, "#  # #    #    Patching for LOS3.1 ProFile");
-    ALERT_LOG(0, "#### #    #### Patching for LOS3.1 ProFile");
-    ALERT_LOG(0, "#  # #    #    Patching for LOS3.1 ProFile");
-    ALERT_LOG(0, "#  # #### #### Patching for LOS3.1 ProFile");
-  }
-
-  los31_hle = 0;
-}
 
 // also in z8530-terminal.cpp and reg68k.c
 #define CONSOLETERM 2
@@ -696,9 +554,6 @@ void hle_intercept(void)
   case LISA_MONITOR_RUNNING:
     hle_monitor_intercept();
     return;
-  case LISA_OFFICE_RUNNING:
-    hle_los_intercept();
-    return;
   case LISA_MACWORKS_RUNNING:
     // hle_mw30_intercept_unused();
     return;
@@ -724,7 +579,6 @@ void hle_intercept(void)
 
     DEBUG_LOG(0, "running os: %d pc:%08x a4:%08x, a5:%08x via:%d profile :%p", running_lisa_os, PC, a4, a5, vianum, P);
 
-    // profile related intercepts
     if (P)
     {
       switch (reg68k_pc)
@@ -743,68 +597,10 @@ void hle_intercept(void)
         }
         break;
 
-      case 0x00020c64:
-        size = 4;
-        reg68k_pc = 0x00020c74;
-        ALERT_LOG(0, "profile.c:hle:read status");
-        P->indexread = 0;
-        P->indexwrite = 4;
-        P->DataBlock[0] = 0;
-        P->DataBlock[1] = 0;
-        P->DataBlock[2] = 0;
-        P->DataBlock[3] = 0;
-        P->BSYLine = 0;
-        P->StateMachineStep = 12;
-        break; // read 4 status bytes into A4, increase a4+=4, PC=00020c74
-
-      case 0x00020d1e:
-        size = 20;
-        regs.pc = pc24 = reg68k_pc = 0x00020d26;
-        DEBUG_LOG(0, "profile.c:state:hle:read tags");
-        break; // read 20 bytes of tags into *a4, increase a4+=20, D5= 0x0000ffff PC=00020d26
-      case 0x00020d3e:
-        size = 512;
-        regs.pc = pc24 = reg68k_pc = 0x00020d72;
-        DEBUG_LOG(0, "profile.c:state:hle:read sector");
-        break; // read 512 bytes of data into *a4, a4+=512 D5=0x0000ffff PC=0x00020d72
-
-      // write tag/sector specific
-      case 0x00020ebc:
-        regs.pc = pc24 = reg68k_pc = 0x00020ef0;
-        DEBUG_LOG(0, "profile.c:state:hle:write sector+tags"); // write tags and data in one shot, then return to 0x00020ef0
-        size = D0;                                             // d5
-        a4 = A4;
-        while (size--)
-        {
-          if (P->indexwrite > 542)
-          {
-            ALERT_LOG(0, "ProFile buffer overrun!");
-            P->indexwrite = 4;
-          }
-          P->DataBlock[P->indexwrite++] = fetchbyte(a4++);
-        }
-
-        return; // we're done, so return.
-
       default:
         ALERT_LOG(0, "Unknown F-Line error: PC:%08x", PC);
         return;
       }
-
-      // fall through common code for read status, tag, data
-
-      A4 += size; // final A4 value to return to UniPlus.
-      regs.pc = pc24 = reg68k_pc;
-      D5 = 0x0000ffff; // D5 is done in dbra loop for all 3 cases, mark it with -1 as done.
-
-      while (size--)
-      {
-        uint8 r = P->DataBlock[P->indexread++];
-        DEBUG_LOG(0, "profile hle:%02x to %08x from index:%d state:%d", r, a4, P->indexread - 1, P->StateMachineStep);
-        lisa_wb_ram(a4++, r);
-      }
-
-      ALERT_LOG(0, "returning to: %08x, a4:%08x,%08x", PC, A4, a4);
       return;
     }
   }
@@ -849,8 +645,8 @@ void apply_uniplus_hacks(void)
       ALERT_LOG(0, "Patching for UniPlus v1.1 sunix");
       ALERT_LOG(0, "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
 
-      lisa_wb_ram(0x0001fe24, 0x60);   // skip assert BSY 1
-      lisa_wb_ram(0x0001ff38, 0x01);   // increase timeout to ludicrous length
+      // The ProFile handshake patches (skip BSY assert at 0x1fe24, longer timeout at 0x1ff38) are gone:
+      // profile.c now keeps BSY the way a real drive does.
       lisa_wl_ram(0x0000c188, 0xf33d); // time speedup patch   TST.W      $00022d46/BNE.W      $0000c182
 
       uniplus_hacks = 0; // turn off short-circuit logic-AND flag
@@ -863,32 +659,17 @@ void apply_uniplus_hacks(void)
       ALERT_LOG(0, "Patching for UNIPLUS v1.4");
       ALERT_LOG(0, "====================================================================");
 
-      // these two are needed to pass handshaking in Uni+ with our shitty profile emulation
-      lisa_wb_ram(0x00020f9c, 0x60);   // skip assert BSY
-      lisa_wb_ram(0x000210b0, 0x01);   // increase timeout to ludicrous length
+      // The ProFile handshake patches (skip BSY assert at 0x20f9c, longer timeout at 0x210b0) are gone:
+      // profile.c now keeps BSY the way a real drive does.
       lisa_wl_ram(0x0000c188, 0xf33d); // time speedup patch   TST.W      $00022d46/BNE.W      $0000c182
 
-      // these are optional for HLE acceleration of ProFile reads/writes
-      if (hle)
+      // The ProFile read/write HLE intercepts are gone too: the driver's own byte loops run on the emulated drive.
+
+      // putchar intercept for terminal
+      if (consoletermwindow)
       {
-        ALERT_LOG(0, "#  # #    #### Patching for UNIPLUS v1.4 HLE");
-        ALERT_LOG(0, "#  # #    #    Patching for UNIPLUS v1.4 HLE");
-        ALERT_LOG(0, "#### #    #### Patching for UNIPLUS v1.4 HLE");
-        ALERT_LOG(0, "#  # #    #    Patching for UNIPLUS v1.4 HLE");
-        ALERT_LOG(0, "#  # #### #### Patching for UNIPLUS v1.4 HLE");
-
-        // profile HLE patches
-        lisa_ww_ram(0x00020c64, 0xf33d); // read 4 status bytes into A4, increase a4+=4, PC=00020c74
-        lisa_ww_ram(0x00020d1e, 0xf33d); // read 20 bytes of tags into *a4, increase a4+=20, D5= 0x0000ffff PC=00020d26
-        lisa_ww_ram(0x00020d3e, 0xf33d); // read 512 bytes of data into *a4, a4+=512 D5=0x0000ffff PC=0x00020d72
-        lisa_ww_ram(0x00020ebc, 0xf33d); // wrtite 512+20 bytes of data+tags in one shot. into *a4, a4+=512 D5=0x0000ffff PC=0x00020ef0
-
-        // putchar intercept for terminal
-        if (consoletermwindow)
-        {
-          lisa_ww_ram(0x000236c6, 0xf33d);
-          init_terminal_serial_port(CONSOLETERM); // open terminal window for console
-        }
+        lisa_ww_ram(0x000236c6, 0xf33d);
+        init_terminal_serial_port(CONSOLETERM); // open terminal window for console
       }
       uniplus_hacks = 0; // turn off short-circuit logic-AND flag
     }

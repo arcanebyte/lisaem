@@ -48,7 +48,6 @@ extern "C"
     extern int cheat_ram_test;
     extern int sound_effects_on;
     extern int skins_on_next_run;
-    extern int hle;
     extern int macworks4mb;
     extern int double_sided_floppy;
     extern void save_configs(void);
@@ -218,16 +217,10 @@ LisaConfigFrame::LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig)
 
 void LisaConfigFrame::OnNoteBook(wxNotebookEvent &WXUNUSED(event))
 {
-    // The LisaTest loopback adapter attaches to both serial ports at once.
-    // if one is set to loopback so, must the other follow.
-    if (!serialabox || !serialbbox)
-        return;
-
-    if (serialabox->GetSelection() == 1 || serialbbox->GetSelection() == 1)
-    {
-        serialabox->SetSelection(1);
-        serialbbox->SetSelection(1);
-    }
+    // Nothing to do on page changes. The loopback pairing of the serial ports is
+    // handled when a port is set to Loopback (OnSerialChanged) and when one is
+    // moved off Loopback (ApplyChanges). Forcing both ports to Loopback here would
+    // silently undo a port that was just moved off Loopback before it is applied.
 }
 
 extern "C" uint8 floppy_ram[2048];
@@ -552,7 +545,6 @@ void LisaConfigFrame::ApplyChanges()
     my_lisaconfig->mymaxlisaram = memsizes[cpurambox->GetSelection()];
     cheat_ram_test = cheats->GetValue() ? 1 : 0;
 
-    hle = hle_cheats->GetValue() ? 1 : 0;
     macworks4mb = 0; // doesn't work yet // macwx4mb->GetValue() ? 1:0;
 
     sound_effects_on = soundeffects->GetValue() ? 1 : 0;
@@ -570,6 +562,24 @@ void LisaConfigFrame::ApplyChanges()
     }
 
     // --- ports ------------------------------------------------------------
+    // The LisaTest loopback adapter connects both serial ports, so Loopback is valid
+    // only on both ports or neither. Setting one port to Loopback already syncs the
+    // other (OnSerialChanged), so a mismatch here means a port was moved off Loopback:
+    // move the other port to Nothing, otherwise power-on would force both back to
+    // Loopback. "Nothing" is index 0 and "Loopback" index 1 in nothingonly and serportopts.
+    if ((serialabox->GetSelection() == 1) != (serialbbox->GetSelection() == 1))
+    {
+        bool a_is_loopback = (serialabox->GetSelection() == 1);
+        wxMessageBox(a_is_loopback ? _T("Serial Port B is no longer set to Loopback.\n\n"
+                                        "The LisaTest loopback adapter connects both serial ports, "
+                                        "so Serial Port A has been set to Nothing.")
+                                   : _T("Serial Port A is no longer set to Loopback.\n\n"
+                                        "The LisaTest loopback adapter connects both serial ports, "
+                                        "so Serial Port B has been set to Nothing."),
+                     _T("Loopback"), wxOK | wxICON_INFORMATION, this);
+        (a_is_loopback ? serialabox : serialbbox)->SetSelection(0);
+    }
+
     my_lisaconfig->serial1_setting = serportopts[serialabox->GetSelection()];
     my_lisaconfig->serial2_setting = serportopts[serialbbox->GetSelection()];
     my_lisaconfig->serial1_param = serialaparam->GetValue();
@@ -936,9 +946,6 @@ wxPanel *LisaConfigFrame::CreateMainConfigPage(wxNotebook *parent)
         cheats = new wxCheckBox(panel, wxID_ANY, wxT("Boot ROM speedup hacks"));
         cheats->SetValue((bool)(cheat_ram_test));
         fg->Add(cheats);
-        hle_cheats = new wxCheckBox(panel, wxID_ANY, wxT("Hard drive acceleration"));
-        hle_cheats->SetValue((bool)(hle));
-        fg->Add(hle_cheats);
         console_term = new wxCheckBox(panel, wxID_ANY, wxT("Console terminal"));
         console_term->SetValue((bool)consoletermwindow);
         fg->Add(console_term);

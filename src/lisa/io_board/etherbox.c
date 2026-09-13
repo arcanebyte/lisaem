@@ -27,6 +27,7 @@
 
 #define IN_ETHERBOX_C
 #include <vars.h>
+#include <etherbox.h>
 #include <stdarg.h>
 
 extern void set_next_timer_id(uint8 x);
@@ -88,15 +89,6 @@ enum eb_rxstate
     EB_RX_FULL      // holds a received frame; the Lisa owns it again
 };
 
-// Host side of the box.  recv returns the length of the next waiting frame, or 0.
-typedef struct
-{
-    const char *name;
-    void (*send)(void *ctx, const uint8 *frame, int len);
-    int (*recv)(void *ctx, uint8 *frame, int maxlen);
-    void (*close)(void *ctx);
-} EtherBoxBackend;
-
 struct EtherBoxType
 {
     int vianum;
@@ -124,8 +116,7 @@ struct EtherBoxType
     XTIMER irq_check_e;
     XTIMER poll_e;
 
-    const EtherBoxBackend *backend;
-    void *backend_ctx;
+    EtherBoxBackend *backend;
 
     // trace of buffer data moved in one run of strobes
     int run_reg, run_write, run_count;
@@ -167,20 +158,90 @@ static int eb_tracing(void)
     return eb_trace_state > 0 && eb_trace_lines < EB_TRACE_MAX_LINES;
 }
 
+static void eb_vtrace(const char *who, const char *fmt, va_list ap)
+{
+    fprintf(eb_trace_f, "%012llx pc:%08x %s ", (long long)cpu68k_clocks, reg68k_pc, who);
+    vfprintf(eb_trace_f, fmt, ap);
+    fputc('\n', eb_trace_f);
+    fflush(eb_trace_f);
+    if (++eb_trace_lines == EB_TRACE_MAX_LINES)
+        fprintf(eb_trace_f, "trace limit reached\n");
+}
+
 static void eb_trace(EtherBoxType *eb, const char *fmt, ...)
+{
+    va_list ap;
+    char who[16];
+
+    if (!eb_tracing())
+        return;
+    snprintf(who, sizeof(who), "via%d", eb->vianum);
+    va_start(ap, fmt);
+    eb_vtrace(who, fmt, ap);
+    va_end(ap);
+}
+
+void etherbox_backend_trace(const char *fmt, ...)
 {
     va_list ap;
 
     if (!eb_tracing())
         return;
-    fprintf(eb_trace_f, "%012llx pc:%08x via%d ", (long long)cpu68k_clocks, reg68k_pc, eb->vianum);
     va_start(ap, fmt);
-    vfprintf(eb_trace_f, fmt, ap);
+    eb_vtrace("backend", fmt, ap);
     va_end(ap);
-    fputc('\n', eb_trace_f);
-    fflush(eb_trace_f);
-    if (++eb_trace_lines == EB_TRACE_MAX_LINES)
-        fprintf(eb_trace_f, "trace limit reached\n");
+}
+
+/*********************************************************************************************\
+*  Packet capture: set LISAEM_ETHERBOX_PCAP to a file name (or 1 for ~/lisaem-etherbox.pcap)  *
+*  Frames the Lisa sends and frames the backend delivers, stamped with emulated time.         *
+\*********************************************************************************************/
+
+static FILE *eb_pcap_f = NULL;
+static int eb_pcap_state = 0; // 0 not checked yet, 1 on, -1 off
+
+// pcap fields are in the writer's byte order; readers tell which from the magic number
+static void eb_pcap_put32(uint32 v) { fwrite(&v, 4, 1, eb_pcap_f); }
+static void eb_pcap_put16(uint16 v) { fwrite(&v, 2, 1, eb_pcap_f); }
+
+static void eb_pcap(const uint8 *frame, int len)
+{
+    if (eb_pcap_state == 0)
+    {
+        const char *e = getenv("LISAEM_ETHERBOX_PCAP");
+        char path[1024];
+
+        eb_pcap_state = -1;
+        if (!e || !*e || !strcmp(e, "0"))
+            return;
+        if (!strcmp(e, "1"))
+            snprintf(path, sizeof(path), "%s/lisaem-etherbox.pcap", getenv("HOME") ? getenv("HOME") : "/tmp");
+        else
+            snprintf(path, sizeof(path), "%s", e);
+        eb_pcap_f = fopen(path, "wb");
+        if (!eb_pcap_f)
+        {
+            ALERT_LOG(0, "EtherBox: could not open packet capture file %s", path);
+            return;
+        }
+        eb_pcap_state = 1;
+        eb_pcap_put32(0xa1b2c3d4); // magic, microsecond timestamps
+        eb_pcap_put16(2);          // version 2.4
+        eb_pcap_put16(4);
+        eb_pcap_put32(0);          // time zone
+        eb_pcap_put32(0);          // timestamp accuracy
+        eb_pcap_put32(65535);      // snap length
+        eb_pcap_put32(1);          // Ethernet
+    }
+    if (eb_pcap_state < 0)
+        return;
+
+    eb_pcap_put32((uint32)(cpu68k_clocks / ONE_SECOND));
+    eb_pcap_put32((uint32)((cpu68k_clocks % ONE_SECOND) * 1000000 / ONE_SECOND));
+    eb_pcap_put32((uint32)len);
+    eb_pcap_put32((uint32)len);
+    fwrite(frame, 1, len, eb_pcap_f);
+    fflush(eb_pcap_f);
 }
 
 static const char *eb_regname(int r)
@@ -255,14 +316,27 @@ static void eb_trace_frame(EtherBoxType *eb, const char *what, const uint8 *f, i
 *  Backend with no network: transmitted frames are dropped, nothing is received.             *
 \*********************************************************************************************/
 
-static void eb_null_send(void *ctx, const uint8 *frame, int len)
+static void eb_null_send(EtherBoxBackend *be, const uint8 *frame, int len)
 {
-    UNUSED(ctx);
+    UNUSED(be);
     UNUSED(frame);
     UNUSED(len);
 }
 
-static const EtherBoxBackend eb_null_backend = {"none", eb_null_send, NULL, NULL};
+static EtherBoxBackend eb_null_backend = {"none", eb_null_send, NULL, NULL, NULL};
+
+// LISAEM_ETHERBOX_BACKEND picks the backend: "none" (the default) or "responder"
+static EtherBoxBackend *eb_open_backend(void)
+{
+    const char *e = getenv("LISAEM_ETHERBOX_BACKEND");
+    EtherBoxBackend *be = NULL;
+
+    if (e && !strcmp(e, "responder"))
+        be = etherbox_responder_open();
+    else if (e && *e && strcmp(e, "none"))
+        ALERT_LOG(0, "EtherBox: unknown backend %s, using none", e);
+    return be ? be : &eb_null_backend;
+}
 
 /*********************************************************************************************\
 *  Timing and interrupts                                                                     *
@@ -326,7 +400,8 @@ static void eb_transmit(EtherBoxType *eb)
     eb_trace_frame(eb, "TX", eb->xmtbuf + start, len);
     if (len >= 14)
     {
-        eb->backend->send(eb->backend_ctx, eb->xmtbuf + start, len);
+        eb_pcap(eb->xmtbuf + start, len);
+        eb->backend->send(eb->backend, eb->xmtbuf + start, len);
         eb->tx_frames++;
     }
     eb->xmit_owned = 1;
@@ -407,9 +482,10 @@ static void eb_poll_backend(EtherBoxType *eb)
         return;
     while (eb->sysei && (eb->rxstate[0] == EB_RX_ARMED || eb->rxstate[1] == EB_RX_ARMED))
     {
-        len = eb->backend->recv(eb->backend_ctx, frame, sizeof(frame));
+        len = eb->backend->recv(eb->backend, frame, sizeof(frame));
         if (len <= 0)
             break;
+        eb_pcap(frame, len);
         eb_receive(eb, frame, len);
     }
 }
@@ -671,8 +747,7 @@ EtherBoxType *etherbox_attach(int vianum)
     eb->prom[5] = (uint8)vianum;
     eb->portb = EB_PB_RC;
     eb->rcvbuf[0][0] = eb->rcvbuf[1][0] = EB_STALE;
-    eb->backend = &eb_null_backend;
-    eb->backend_ctx = NULL;
+    eb->backend = eb_open_backend();
     ALERT_LOG(0, "EtherBox attached to VIA#%d, address %02x:%02x:%02x:%02x:%02x:%02x, backend %s", vianum, eb->prom[0],
               eb->prom[1], eb->prom[2], eb->prom[3], eb->prom[4], eb->prom[5], eb->backend->name);
     eb_trace(eb, "attached, address %02x:%02x:%02x:%02x:%02x:%02x, backend %s", eb->prom[0], eb->prom[1], eb->prom[2],
@@ -687,6 +762,6 @@ void etherbox_detach(EtherBoxType *eb)
     eb_trace_flush_run(eb);
     eb_trace(eb, "detached: %ld frames sent, %ld received, %ld dropped", eb->tx_frames, eb->rx_frames, eb->rx_dropped);
     if (eb->backend->close)
-        eb->backend->close(eb->backend_ctx);
+        eb->backend->close(eb->backend);
     free(eb);
 }

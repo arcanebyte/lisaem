@@ -53,9 +53,26 @@
             V->via[IFR] = 0;    \
     }
 
-// clear CA1/CA2 on ORA/IRA access
-// these 3 macros must be copied to cops.c for via1_ira/ora.
+// clear CA1/CA2 on ORA/IRA (register 1) access, as the 6522 does: CA1 always, CA2 unless it is
+// an independent interrupt input.  Used for the parallel port VIAs.
 #define VIA_CLEAR_IRQ_PORT_A(x)                                            \
+    {                                                                      \
+        via[x].via[IFR] &= ~VIA_IRQ_BIT_CA1;                               \
+        if (((via[x].via[PCR] >> 1) & 7) != 1 &&                           \
+            ((via[x].via[PCR] >> 1) & 7) != 3)                             \
+            via[x].via[IFR] &= ~VIA_IRQ_BIT_CA2;                           \
+        via[x].ca1 = 0;                                                    \
+        via[x].ca2 = 0;                                                    \
+        if (via[x].via[IFR] == 128)                                        \
+            via[x].via[IFR] = 0;                                           \
+    }
+
+// CA2 in handshake or pulse output mode: a register 1 access pulses CA2 (/PSTRB on a parallel port)
+#define VIA_CA2_STROBES(x) ((((via[x].via[PCR]) >> 1) & 6) == 4)
+
+// clear CA1/CA2 on ORA/IRA access - the COPS VIA's original behaviour, keeps CA1 in independent CA2 mode.
+// these 3 macros must be copied to cops.c for via1_ira/ora.
+#define VIA_CLEAR_IRQ_PORT_A_COPS(x)                                       \
     {                                                                      \
         if (((via[x].via[PCR] >> 1) & 7) != 1 &&                           \
             ((via[x].via[PCR] >> 1) & 7) != 3)                             \
@@ -278,7 +295,20 @@ void VIAProfileLoop_unused(int vianum, ProFileType *P, int event)
 }
 */
 
-// VIA Wrapper around ProFile loop to handle BSY (CA1) IRQ's -- if they're enabled that is.
+// A parallel VIA's IRQ output may have just gone active (CA1 latched or IER written).  Stop the CPU
+// loop after the current instruction so the interrupt is taken now rather than at the next timer
+// event.  get_next_timer_event() then finds the real next timer again.
+static void via_irq_check_now(int vianum)
+{
+    if ((via[vianum].via[IER] & via[vianum].via[IFR] & 0x7f) && cpu68k_clocks_stop > cpu68k_clocks)
+    {
+        set_next_timer_id(0);
+        cpu68k_clocks_stop = cpu68k_clocks;
+    }
+}
+
+// VIA Wrapper around ProFile loop: a BSY edge of the polarity PCR bit 0 selects latches CA1 in IFR,
+// whatever IER holds, as the 6522 does.
 void VIAProfileLoop(int vianum, ProFileType *P, int event)
 {
     int BSY=P->BSYLine;
@@ -296,6 +326,7 @@ void VIAProfileLoop(int vianum, ProFileType *P, int event)
         if ((P->BSYLine!=0) ^  ((via[vianum].via[PCR] & 1)!=0) )
             {
                 via[vianum].via[IFR] |=VIA_IRQ_BIT_CA1;
+                via_irq_check_now(vianum);
 
                 DEBUG_LOG(0,"state:%d Enabled CA1(BSY) on %d->%d BSY transition pcr:%d pc24:%08x tag:profile.c",
                     P->StateMachineStep,BSY,P->BSYLine,
@@ -819,8 +850,8 @@ int check_contrast_set(void)
 
 uint8 via2_ira(uint8 regnum)
 {
-    UNUSED(regnum);
-    VIA_CLEAR_IRQ_PORT_A(2); // clear CA1/CA2 on ORA/IRA access
+    if (regnum != IRANH)
+        VIA_CLEAR_IRQ_PORT_A(2); // clear CA1/CA2 on IRA access, register 15 has no handshake
 
     if (via[2].via[ORBB] & via[2].via[DDRB] & 4)
     {
@@ -830,7 +861,7 @@ uint8 via2_ira(uint8 regnum)
 
     if (via[2].ProFile) // Is this a profile?
     {
-        VIAProfileLoop(2, via[2].ProFile, PROLOOP_EV_IRA);
+        VIAProfileLoop(2, via[2].ProFile, (regnum != IRANH && VIA_CA2_STROBES(2)) ? PROLOOP_EV_IRA : PROLOOP_EV_IRA_NOSTROBE);
         via[2].via[IRA] = via[2].ProFile->VIA_PA;
         DEBUG_LOG(0, "profile.c:READ %02x from ProFile, pc24:%08x  tag:profile state:%d", via[2].via[IRA], pc24, via[2].ProFile->StateMachineStep);
         return via[2].via[IRA];
@@ -844,8 +875,8 @@ uint8 via2_ira(uint8 regnum)
 // lisa_rb_Oxd800_par_via2(uint32 addr)
 void via2_ora(uint8 data, uint8 regnum)
 {
-    UNUSED(regnum);
-    VIA_CLEAR_IRQ_PORT_A(2); // clear CA1/CA2 on ORA/IRA access
+    if (regnum != ORANH)
+        VIA_CLEAR_IRQ_PORT_A(2); // clear CA1/CA2 on ORA access, register 15 has no handshake
     via[2].last_pa_write = cpu68k_clocks;
     DEBUG_LOG(0, "ORA:%02x DDRA:%02x   ORB:%02x DDRB:%0x", via[2].via[ORA], via[2].via[DDRA], via[2].via[ORB], via[2].via[DDRB]);
     if (via[2].via[DDRA] == 0)
@@ -867,7 +898,7 @@ void via2_ora(uint8 data, uint8 regnum)
         via[2].ProFile->VIA_PA = data;
         via[2].via[ORA] = data;
         via[2].ProFile->last_a_accs = 1; // 20060323//
-        VIAProfileLoop(2, via[2].ProFile, PROLOOP_EV_ORA);
+        VIAProfileLoop(2, via[2].ProFile, (regnum != ORANH && VIA_CA2_STROBES(2)) ? PROLOOP_EV_ORA : PROLOOP_EV_ORA_NOSTROBE);
         return;
     }
 
@@ -1271,7 +1302,7 @@ void lisa_wb_Oxdc00_cops_via1(uint32 addr, uint8 xvalue)
             return; // already what's on the port, ignore the write
         }
 
-        VIA_CLEAR_IRQ_PORT_A(1); // clear CA1/CA2 on ORA/IRA access
+        VIA_CLEAR_IRQ_PORT_A_COPS(1); // clear CA1/CA2 on ORA/IRA access
 
         DEBUG_LOG(0, "ORA1");
         via[1].via[ORA] = (via[1].via[IRAA] & (~via[1].via[DDRA])) | (via[1].via[ORAA] & via[1].via[DDRA]);
@@ -1671,7 +1702,7 @@ uint8 lisa_rb_Oxdc00_cops_via1(uint32 addr)
         return via[1].via[IRB];
 
     case IRANH1:
-        VIA_CLEAR_IRQ_PORT_A(1); // was ORANH1
+        VIA_CLEAR_IRQ_PORT_A_COPS(1); // was ORANH1
         via[1].last_a_accs = 0;
         DEBUG_LOG(0, "IRANH1");
 
@@ -1685,7 +1716,7 @@ uint8 lisa_rb_Oxdc00_cops_via1(uint32 addr)
 
     case IRA1:
         via[1].last_a_accs = 0;
-        VIA_CLEAR_IRQ_PORT_A(1);
+        VIA_CLEAR_IRQ_PORT_A_COPS(1);
         DEBUG_LOG(0, "IRA1"); // 20060105 | previously used outputs
 
         via[1].via[IRAA] = via1_ira(15);                                                                    // read full byte into shadow
@@ -1920,13 +1951,6 @@ void lisa_wb_Oxd800_par_via2(uint32 addr, uint8 xvalue)
         if (via[2].ProFile)
             via[2].ProFile->last_a_accs = 1;
 
-        if (via[2].via[ORA] == xvalue && via[2].last_port == ORANH2)
-        {
-            DEBUG_LOG(0, "in ORA2: Already wrote %02x to ORANH2, not pushing it again.\n", xvalue);
-            via[2].last_port = port;
-            return; // already what's on the port, ignore the write
-        }
-
         VIA_CLEAR_IRQ_PORT_A(2); // clear CA1/CA2 on ORA/IRA access
 
         via[2].via[ORA] = (via[2].via[IRAA] & (~via[2].via[DDRA])) | (via[2].via[ORAA] & via[2].via[DDRA]);
@@ -1988,7 +2012,7 @@ void lisa_wb_Oxd800_par_via2(uint32 addr, uint8 xvalue)
                       xvalue,
                       via[2].via[ORAA]);
 
-            via2_ora((via[2].via[ORAA] & xvalue), ORA); // output the masked data
+            via2_ora((via[2].via[ORAA] & xvalue), ORANH); // output the masked data - no handshake on a DDRA write
         }
         return;
 
@@ -2251,8 +2275,12 @@ void lisa_wb_Oxd800_par_via2(uint32 addr, uint8 xvalue)
             break;
         }
 #endif
-        if ((via[2].via[PCR] ^ xvalue) & 1)
-            via[2].via[IFR] |= VIA_IRQ_BIT_CA1;
+        // CA2 manual output taken from low to high is a /PSTRB pulse for an attached ProFile
+        if (via[2].ProFile && ((via[2].via[PCR] >> 1) & 7) == 6 && ((xvalue >> 1) & 7) == 7)
+        {
+            via[2].via[PCR] = xvalue;
+            VIAProfileLoop(2, via[2].ProFile, PROLOOP_EV_STROBE);
+        }
         via[2].via[PCR] = xvalue;
         via[2].last_port = port;
         return;
@@ -2293,10 +2321,10 @@ void lisa_wb_Oxd800_par_via2(uint32 addr, uint8 xvalue)
         else
             via[2].via[IER] &= (0x7f ^ (xvalue & 0x7f));
 
-        // clear out anything that IER has disabled on the write.  2020.11.06
-        via[2].via[IFR] &= via[2].via[IER];
+        // IER only masks: flags stay latched in IFR.  An enabled flag interrupts right away.
         via[2].last_port = port;
         FIX_VIA_IFR(2);
+        via_irq_check_now(2);
 
 // from via 1// if bit 7=0, then all 1 bits are reversed. 1=no irq, 0=irq enabled.
 /// if   (xvalue & 128) {via[1].via[IER] |= xvalue;}
@@ -2432,7 +2460,7 @@ uint8 lisa_rb_Oxd800_par_via2(uint32 addr)
 
         VIA_CLEAR_IRQ_PORT_A(2); // clear CA1/CA2 on ORA/IRA access
 
-        via[2].via[IRAA] = (via2_ira(15));
+        via[2].via[IRAA] = (via2_ira(IRA));
         via[2].via[IRA] = (via[2].via[IRAA] & (~via[2].via[DDRA])) | (via[2].via[ORAA] & via[2].via[DDRA]); // read data from port base it on DDRA mask
         via[2].last_port = port;
 
@@ -2512,9 +2540,7 @@ uint8 lisa_rb_Oxd800_par_via2(uint32 addr)
         if (via[2].ProFile)
         {
 
-            if (via[2].ProFile->BSYLine)
-                via[2].via[IFR] |= (VIA_IRQ_BIT_CA1);
-            // 20060526-bug here// else                          via[2].via[IFR] &=(255-VIA_IRQ_BIT_CA1);
+            // CA1 is latched on BSY edges by VIAProfileLoop(), a read of IFR doesn't change it
 
             // 20060525// via[2].via[IFR]|=8; -- do not enable this.       // Parity Error=true
             via[2].via[IFR] &= ~VIA_IRQ_BIT_CB2; // 20060525 - want this one  // Parity Error=false
@@ -2550,7 +2576,8 @@ uint8 lisa_rb_Oxd800_par_via2(uint32 addr)
 
 uint8 viaX_ira(viatype *V, uint8 regnum)
 {
-    VIA_CLEAR_IRQ_PORT_A(V->vianum); // clear CA1/CA2 on ORA/IRA access
+    if (regnum != IRANH)
+        VIA_CLEAR_IRQ_PORT_A(V->vianum); // clear CA1/CA2 on IRA access, register 15 has no handshake
     // if (debug_log_enabled) fdumpvia2(buglog);
     //  driver enable is off, don't process ADMP/Profile data output - not sure if this is correct.
 
@@ -2562,7 +2589,7 @@ uint8 viaX_ira(viatype *V, uint8 regnum)
 
     if (V->ProFile) // Is this a profile?
     {
-        VIAProfileLoop(V->vianum, V->ProFile, PROLOOP_EV_IRA);
+        VIAProfileLoop(V->vianum, V->ProFile, (regnum != IRANH && VIA_CA2_STROBES(V->vianum)) ? PROLOOP_EV_IRA : PROLOOP_EV_IRA_NOSTROBE);
         V->via[IRA] = V->ProFile->VIA_PA;
         DEBUG_LOG(0, "VIA:%d profile.c:READ %02x from ProFile, pc24:%08x  tag:profile state:%d", V->vianum, V->via[IRA], pc24, V->ProFile->StateMachineStep);
         return V->via[IRA];
@@ -2573,15 +2600,14 @@ uint8 viaX_ira(viatype *V, uint8 regnum)
         return 0;
     } // ADMP doesn't return anything far as I know
     // else if (V->ira!=NULL) return viaX_ira(2,regnum); // Some other thing attached.
-    UNUSED(regnum);
     return 0; // nothing attached, ignore.
 }
 
 // this is the one that's actually used!
 void viaX_ora(viatype *V, uint8 data, uint8 regnum)
 {
-    UNUSED(regnum);
-    VIA_CLEAR_IRQ_PORT_A(V->vianum); // clear CA1/CA2 on ORA/IRA access
+    if (regnum != ORANH)
+        VIA_CLEAR_IRQ_PORT_A(V->vianum); // clear CA1/CA2 on ORA access, register 15 has no handshake
     V->last_pa_write = cpu68k_clocks;
     DEBUG_LOG(0, "VIA:%D ORA:%02x DDRA:%02x   ORB:%02x DDRB:%0x", V->vianum, V->via[ORA], V->via[DDRA], V->via[ORB], V->via[DDRB]);
     if (V->via[DDRA] == 0)
@@ -2607,7 +2633,7 @@ void viaX_ora(viatype *V, uint8 data, uint8 regnum)
         V->ProFile->VIA_PA = data;
         V->via[ORA] = data;
         V->ProFile->last_a_accs = 1; // 20060323//
-        VIAProfileLoop(V->vianum, V->ProFile, PROLOOP_EV_ORA);
+        VIAProfileLoop(V->vianum, V->ProFile, (regnum != ORANH && VIA_CA2_STROBES(V->vianum)) ? PROLOOP_EV_ORA : PROLOOP_EV_ORA_NOSTROBE);
         return;
     }
 
@@ -2899,7 +2925,7 @@ uint8 lisa_rb_ext_2par_via(ViaType *V, uint32 addr)
             V->ProFile->last_a_accs = 0;
         VIA_CLEAR_IRQ_PORT_A(V->vianum); // clear CA1/CA2 on ORA/IRA access
 
-        V->via[IRAA] = (viaX_ira(V, 15));
+        V->via[IRAA] = (viaX_ira(V, IRA));
         V->via[IRA] = (V->via[IRAA] & (~V->via[DDRA])) | (V->via[ORAA] & V->via[DDRA]);             // read data from port base it on DDRA mask
         V->last_port = port;
         DEBUG_LOG(0, "profile.c:widget.c: Profile->Lisa IRA2 %02x   pc24:%08x", V->via[IRA], pc24); // 20060105 or in old outputs
@@ -2983,9 +3009,7 @@ uint8 lisa_rb_ext_2par_via(ViaType *V, uint32 addr)
         if (V->ProFile)
         {
 
-            if (V->ProFile->BSYLine)
-                V->via[IFR] |= (VIA_IRQ_BIT_CA1);
-            // 20060526-bug here// else                          V->via[IFR] &=(255-VIA_IRQ_BIT_CA1);
+            // CA1 is latched on BSY edges by VIAProfileLoop(), a read of IFR doesn't change it
 
             // 20060525// V->via[IFR]|=8; -- do not enable this.       // Parity Error=true
             V->via[IFR] &= ~VIA_IRQ_BIT_CB2; // 20060525 - want this one  // Parity Error=false
@@ -3125,13 +3149,6 @@ void lisa_wb_ext_2par_via(ViaType *V, uint32 addr, uint8 xvalue)
         if (V->ProFile)
             V->ProFile->last_a_accs = 1;
 
-        if (V->via[ORA] == xvalue && V->last_port == ORANH2)
-        {
-            DEBUG_LOG(0, "in ORA2: Already wrote %02x to ORANH2, not pushing it again.\n", xvalue);
-            via[2].last_port = port;
-            return; // already what's on the port, ignore the write
-        }
-
         VIA_CLEAR_IRQ_PORT_A(V->vianum); // clear CA1/CA2 on ORA/IRA access
 
         V->via[ORA] = (V->via[IRAA] & (~V->via[DDRA])) | (V->via[ORAA] & V->via[DDRA]);
@@ -3193,7 +3210,7 @@ void lisa_wb_ext_2par_via(ViaType *V, uint32 addr, uint8 xvalue)
                       xvalue,
                       V->via[ORAA]);
 
-            viaX_ora(V, (V->via[ORAA] & xvalue), ORA); // output the masked data
+            viaX_ora(V, (V->via[ORAA] & xvalue), ORANH); // output the masked data - no handshake on a DDRA write
         }
         return;
 
@@ -3473,8 +3490,12 @@ void lisa_wb_ext_2par_via(ViaType *V, uint32 addr, uint8 xvalue)
             break;
         }
 #endif
-        if ((V->via[PCR] ^ xvalue) & 1)
-            V->via[IFR] |= 2;
+        // CA2 manual output taken from low to high is a /PSTRB pulse for an attached ProFile
+        if (V->ProFile && ((V->via[PCR] >> 1) & 7) == 6 && ((xvalue >> 1) & 7) == 7)
+        {
+            V->via[PCR] = xvalue;
+            VIAProfileLoop(V->vianum, V->ProFile, PROLOOP_EV_STROBE);
+        }
         V->via[PCR] = xvalue;
         V->last_port = port;
         return;
@@ -3510,14 +3531,14 @@ void lisa_wb_ext_2par_via(ViaType *V, uint32 addr, uint8 xvalue)
         else
             V->via[IER] &= (0x7f ^ (xvalue & 0x7f));
 
-        // clear out anything that IER has disabled on the write.  2020.11.06
-        V->via[IFR] &= V->via[IER];
+        // IER only masks: flags stay latched in IFR.  An enabled flag interrupts right away.
         if (V->via[IFR] & 127)
             V->via[IFR] |= 128; // if all are cleared, clear bit 7 else set it
         else
             V->via[IFR] = 0;
 
         V->last_port = port;
+        via_irq_check_now(V->vianum);
 // from via 1// if bit 7=0, then all 1 bits are reversed. 1=no irq, 0=irq enabled.
 /// if   (xvalue & 128) {via[1].via[IER] |= xvalue;}
 /// else via[1].via[IER] &=(0x7f-( xvalue & 0x7f));

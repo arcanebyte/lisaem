@@ -601,7 +601,16 @@ void get_next_timer_event(void)
             } // oops! it expired, but we missed it!
 
             if (via[i].ProFile)
+            {
                 VIAProfileLoop(i, via[i].ProFile, PROLOOP_EV_NUL);
+
+                // end of the drive's busy period, when it raises BSY (CA1)
+                if (via[i].ProFile->clock_e > cpu68k_clocks && cpu68k_clocks_stop > via[i].ProFile->clock_e)
+                {
+                    cpu68k_clocks_stop = via[i].ProFile->clock_e;
+                    next_expired_timer = CYCLE_TIMER_VIAn_CA1(i);
+                }
+            }
 
 #ifdef DEBUG
             if (i < 3 || via[i].active)
@@ -1104,6 +1113,18 @@ void check_current_timer_irq(void)
     // Handle VIA related timers from this point on
     if (!V)
         return; // if we have an erroneous timer, return;
+
+    /// ProFile busy period over ///////////////////////////////////////////////////////////////////////////////////////////////////
+    if ((next_expired_timer & 0xe0) == 0x20)
+    {
+        DEBUG_LOG(0, "Handling ProFile busy period on via %d", i);
+        if (V->ProFile)
+            VIAProfileLoop(i, V->ProFile, PROLOOP_EV_NUL);
+
+        next_expired_timer = 0;
+        get_next_timer_event();
+        return;
+    }
 
     /// Shift register events //////////////////////////////////////////////////////////////////////////////////////////////////////
     if (next_expired_timer & 0x40) // shift register

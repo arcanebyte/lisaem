@@ -742,14 +742,13 @@ GLOBAL(uint8, *lisaram, NULL); // pointer to Lisa RAM
 // this enables a hack that tricks the lisa into skipping the full ram test, thus speeding up
 // the boot process - this sets a PRAM variable saying RAM test is done.
 GLOBAL(int, cheat_ram_test, 1);       // careful if we change the type of this: `extern "C" float hidpi_scale;` in LisaConfigFrame.cpp also
-DECLARE(int, hle);                    // flag to enable HLE hacks
 GLOBAL(uint32, bootblockchecksum, 0); // checksum of bootsector (sector 0) whether from profile or floppy.
 DECLARE(int, macworks4mb);
 DECLARE(int, consoletermwindow);           // preference: enable TerminalWx window for console terminal (UniPlux, LPW, Xenix, etc.)
 GLOBAL(int, romless, 0);                   // are we romless?
 GLOBAL(int, xenix_patch, 1);               // 2022.03.06 flag to signal Xenix HLE patches
 GLOBAL(int, macworks_hle, 1);              // 2025.12.27 this flag is no-longer used. See https://github.com/arcanebyte/lisaem/issues/40
-GLOBAL(int, los31_hle, 1);                 // 2021.04.14 flag to signal LOS 3.1 has been patched for HLE
+GLOBAL(int, los31_hle, 1);                 // 2026.09.13 this flag is no-longer used: the LOS 3.1 ProFile HLE was removed
 GLOBAL(int, monitor_patch, 1);             // 2022.03.06 flag to signal Monitor 12.x has been patched for HLE
 GLOBAL(int, uniplus_hacks, 1);             // 2021.03.05 flag to signal that UniPlus has been patched for profile handshaking
 GLOBAL(int, uniplus_loader_patch, 1);      // 2021.03.17 flag to signal that UniPlus boot loader has been patched for profile handshaking

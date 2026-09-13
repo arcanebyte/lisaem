@@ -48,7 +48,6 @@ extern "C"
     extern int cheat_ram_test;
     extern int sound_effects_on;
     extern int skins_on_next_run;
-    extern int hle;
     extern int macworks4mb;
     extern int double_sided_floppy;
     extern void save_configs(void);
@@ -546,7 +545,6 @@ void LisaConfigFrame::ApplyChanges()
     my_lisaconfig->mymaxlisaram = memsizes[cpurambox->GetSelection()];
     cheat_ram_test = cheats->GetValue() ? 1 : 0;
 
-    hle = hle_cheats->GetValue() ? 1 : 0;
     macworks4mb = 0; // doesn't work yet // macwx4mb->GetValue() ? 1:0;
 
     sound_effects_on = soundeffects->GetValue() ? 1 : 0;
@@ -948,9 +946,6 @@ wxPanel *LisaConfigFrame::CreateMainConfigPage(wxNotebook *parent)
         cheats = new wxCheckBox(panel, wxID_ANY, wxT("Boot ROM speedup hacks"));
         cheats->SetValue((bool)(cheat_ram_test));
         fg->Add(cheats);
-        hle_cheats = new wxCheckBox(panel, wxID_ANY, wxT("Hard drive acceleration"));
-        hle_cheats->SetValue((bool)(hle));
-        fg->Add(hle_cheats);
         console_term = new wxCheckBox(panel, wxID_ANY, wxT("Console terminal"));
         console_term->SetValue((bool)consoletermwindow);
         fg->Add(console_term);

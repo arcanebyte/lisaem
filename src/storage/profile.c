@@ -821,8 +821,8 @@ char *profile_event_names[8] =
 #define GET_CMDBLK_STATE 4            // /BSY high, accept the 6 byte command block until /CMD goes low
 #define BUSY_STATE 6                  // /BSY low until clock_e, then act on P->reply
 #define ACCEPT_DATA_FOR_WRITE_STATE 7 // /BSY high, accept tags+data until /CMD goes low
-#define SEND_DATA_AND_TAGS_STATE 10   // /BSY high, Lisa reads status+tags+data (state # used by hle.c)
-#define SEND_STATUS_BYTES_STATE 12    // /BSY high, Lisa reads status after a write (state # used by hle.c)
+#define SEND_DATA_AND_TAGS_STATE 10   // /BSY high, Lisa reads status+tags+data
+#define SEND_STATUS_BYTES_STATE 12    // /BSY high, Lisa reads status after a write
 
 char *profile_state_names[] = {
     /*  0 */ "Idle",
@@ -839,7 +839,6 @@ char *profile_state_names[] = {
     /* 11 */ "N/A",
     /* 12 */ "SEND_STATUS_BYTES_STATE"};
 
-extern void apply_los31_hacks(void);
 extern void set_next_timer_id(uint8 x);
 
 // Start a busy period that ends delay clocks from now; irq.c picks up clock_e as a timer event.
@@ -971,12 +970,7 @@ void ProfileLoop(ProFileType *P, int event)
     case IDLE_STATE: // /BSY high, wait for the Lisa to lower /CMD
         P->BSYLine = 0;
         if (P->CMDLine)
-        {
-            apply_los31_hacks();
-            // We no-longer do MacWorksXL3.0 hacks. See more at https://github.com/arcanebyte/lisaem/issues/40
-            // apply_mw30_hacks_unused(); # This code was in hle.c
             profile_reply(P, 0x01);
-        }
         return;
 
     case HANDSHAKE_STATE: // /BSY low, the drive samples the bus when /CMD rises

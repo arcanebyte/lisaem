@@ -317,6 +317,14 @@ static void via_irq_check_now(int vianum)
     }
 }
 
+// An attached EtherBox pulsed its interrupt line.  A pulse has both edges, so CA1 latches whatever PCR bit 0 selects.
+void VIAEtherBoxIRQ(int vianum)
+{
+    via[vianum].via[IFR] |= VIA_IRQ_BIT_CA1;
+    FIX_VIA_IFR(vianum);
+    via_irq_check_now(vianum);
+}
+
 // VIA Wrapper around ProFile loop: a BSY edge of the polarity PCR bit 0 selects latches CA1 in IFR,
 // whatever IER holds, as the 6522 does.
 void VIAProfileLoop(int vianum, ProFileType *P, int event)
@@ -2587,6 +2595,9 @@ uint8 viaX_ira(viatype *V, uint8 regnum)
         return contrast;
     }
 
+    if (V->EtherBox)
+        return etherbox_ira(V->EtherBox, regnum != IRANH && VIA_CA2_STROBES(V->vianum));
+
     if (V->ProFile) // Is this a profile?
     {
         VIAProfileLoop(V->vianum, V->ProFile, (regnum != IRANH && VIA_CA2_STROBES(V->vianum)) ? PROLOOP_EV_IRA : PROLOOP_EV_IRA_NOSTROBE);
@@ -2612,6 +2623,14 @@ void viaX_ora(viatype *V, uint8 data, uint8 regnum)
     DEBUG_LOG(0, "VIA:%D ORA:%02x DDRA:%02x   ORB:%02x DDRB:%0x", V->vianum, V->via[ORA], V->via[DDRA], V->via[ORB], V->via[DDRB]);
     if (V->via[DDRA] == 0)
         return; // can't write just yet, ignore.
+
+    if (V->EtherBox)
+    {
+        V->orapending = 0;
+        V->via[ORA] = data;
+        etherbox_ora(V->EtherBox, data, regnum != ORANH && VIA_CA2_STROBES(V->vianum));
+        return;
+    }
     if (V->vianum == 2)
     {
         if (check_contrast_set())
@@ -2662,6 +2681,12 @@ void viaX_orb(ViaType *V, uint8 data)
     {
         if (check_contrast_set())
             return;
+    }
+
+    if (V->EtherBox)
+    {
+        etherbox_orb(V->EtherBox, data);
+        return;
     }
 
     // Is there an attached ProFile device on this parallel port?
@@ -3563,6 +3588,9 @@ void init_vias(void)
 {
     int i, j;
 
+    for (i = 1; i < 9; i++)
+        etherbox_detach(via[i].EtherBox);
+
     memset(&via[0], 0, 8 * sizeof(ViaType));
     via[0].active = 0; // sacrificial lamb. :)  (aka waste of memory)
     via[1].active = 1;
@@ -3604,6 +3632,7 @@ void init_vias(void)
         via[i].srcount = 0;
         via[i].ProFile = NULL;
         via[i].ADMP = 0;
+        via[i].EtherBox = NULL;
         via[i].t1_e = -1;
         via[i].t2_e = -1;
         via[i].t1_fired = 0;

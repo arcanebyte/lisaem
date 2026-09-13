@@ -9481,6 +9481,15 @@ void connect_device_to_via(int v, wxString device, wxString *file, wxString prof
     //    if (v==2) {ALERT_LOG(0,"Connecting %s filename:%s to VIA #%d (motherboard parallel port)",device.c_str(),file->c_str(), v );}
     //       else      {ALERT_LOG(0,"Connecting %s filename:%s to VIA #%d (slot #%d %s)",device.c_str(),file->c_str(), v,1+((v-2)/2), ((v&1) ? "upper":"lower") );}
 
+    etherbox_detach(via[v].EtherBox);
+    via[v].EtherBox = NULL;
+    if (device.IsSameAs(_T("ETHERBOX"), false))
+    {
+      if (v >= 3 && v <= 8) // dual parallel card ports only
+        via[v].EtherBox = etherbox_attach(v);
+      return;
+    }
+
     if (device.IsSameAs(_T("ADMP"), false))
     {
       via[v].ADMP = v;

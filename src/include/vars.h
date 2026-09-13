@@ -875,6 +875,8 @@ typedef struct
   uint16 last_cmd;
 } WidgetType;
 
+typedef struct EtherBoxType EtherBoxType; // 3Com EtherBox, private to etherbox.c
+
 typedef struct
 {
   uint8 active; // is this VIA active? (except via1 and via2 s/b always active)
@@ -919,6 +921,7 @@ typedef struct
 
   ProFileType *ProFile; // If there's a ProFile attached, this structure deals with it.
   int ADMP;             // If there's an Apple Dot Matrix Printer (same as IW, but parallel)
+  EtherBoxType *EtherBox; // If there's a 3Com EtherBox attached
 
   uint8 irqnum; // Interrupt number for this VIA
   uint8 srcount;
@@ -1895,6 +1898,16 @@ extern void get_profile_spare_table(ProFileType *P);
 #define PROLOOP_EV_STROBE 7       // event=7 <- /PSTRB from PCR (CA2 manual output taken from low to high)
 
 extern void profile_schedule_event(ProFileType *P, XTIMER delay);
+
+/****** EtherBox ***********/
+extern EtherBoxType *etherbox_attach(int vianum);
+extern void etherbox_detach(EtherBoxType *eb);
+extern void etherbox_orb(EtherBoxType *eb, uint8 data);
+extern void etherbox_ora(EtherBoxType *eb, uint8 data, int strobe);
+extern uint8 etherbox_ira(EtherBoxType *eb, int strobe);
+extern XTIMER etherbox_next_event(EtherBoxType *eb);
+extern void etherbox_timer(EtherBoxType *eb);
+extern void VIAEtherBoxIRQ(int vianum);
 
 /****** Video ***********/
 

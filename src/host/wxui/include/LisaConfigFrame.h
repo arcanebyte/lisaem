@@ -113,7 +113,7 @@ public:
     wxCheckBox *serialalimit;
     wxCheckBox *serialblimit;
 
-    wxString pportopts[3];  // common to all parallel ports
+    wxString pportopts[4];  // common to all parallel ports; the 4th, EtherBox, only on dual parallel card ports
     wxString wpportopts[3]; // Widget on Lisa 2/10
 
     wxString nothingonly[2];

@@ -28,9 +28,11 @@ This file tracks testing of the `profile-emulation` branch. The branch replaces 
 | OS / kernel | Port | Result |
 |---|---|---|
 | UniPlus V.1.5+ rebuilt `unix.nonet` | built-in | Boots. `find / -print`, `sum`, and `cp`/`cmp`/`rm` round trips pass. |
-| UniPlus V.1.5+ rebuilt `unix.net` | built-in | Boots |
+| UniPlus V.1.5+ rebuilt `unix.net` | built-in | Boots. Mounts the second filesystem on a 20 MB drive (`/dev/p0e`, blocks 19456–38911). Loopback TCP answers (`connect` gets "Connection refused"). |
 | UniPlus 1.4 stock `/unix`, without the removed RAM patches | built-in | Boots |
 | Lisa Office System 3.1 | built-in | Opens OK. The LOS 3.1 HLE patches were still active (see below). |
+
+A "read error" on `/dev/p0e` along the way turned out to be the kernel's own partition table (entry e was `{0, 0}` in `pro.c`), not the emulation. The disk image checked out clean block by block.
 
 Before this branch, the rebuilt UniPlus kernels failed every boot. They hit `ASSERTION BSY`, then "EXCESSIVE DISK DELAY", then `panic: iinit`, or intermittent "failed to issue cmd to disk".
 

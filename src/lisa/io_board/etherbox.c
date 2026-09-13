@@ -355,7 +355,8 @@ static void eb_schedule(EtherBoxType *eb, XTIMER *event, XTIMER delay)
 // the controller's interrupt request, before the pulse on CA1
 static int eb_irq_wanted(EtherBoxType *eb)
 {
-    return eb->sysei && (eb->rxstate[0] == EB_RX_FULL || eb->rxstate[1] == EB_RX_FULL || eb->tx_done);
+    return eb->sysei && ((eb->rxstate[0] == EB_RX_FULL && !eb->rxtaken[0]) ||
+                         (eb->rxstate[1] == EB_RX_FULL && !eb->rxtaken[1]) || eb->tx_done);
 }
 
 // Called after anything that changes the interrupt request.  A new request is signalled from the timer, once the CPU
@@ -494,11 +495,18 @@ static void eb_poll_backend(EtherBoxType *eb)
 *  Register access                                                                           *
 \*********************************************************************************************/
 
+// A buffer's switch bit reads 1 while it is armed, and also once the Lisa has read the status byte of the frame in
+// it.  The second part is not known hardware behaviour.  ebintr() reads AUXCSR again after handling a frame and starts
+// over if anything changed; handling a frame often transmits (an ARP reply, a TCP ack), which changes XBUFSW, and the
+// driver only re-arms buffers at the end.  With a plain switch bit the frame would be read and handled again for each
+// change.
 static uint8 eb_read_aux(EtherBoxType *eb)
 {
-    return EB_XCVRUP | (eb->sysei ? EB_SYSEI : 0) | (eb->rxstate[1] == EB_RX_ARMED ? EB_RBBSW : 0) |
-           (eb->rxstate[0] == EB_RX_ARMED ? EB_RBASW : 0) | (eb->xmit_owned ? EB_XBUFSW : 0) |
-           (eb->b_before_a ? EB_BBASW : 0);
+    int a = eb->rxstate[0] == EB_RX_ARMED || (eb->rxstate[0] == EB_RX_FULL && eb->rxtaken[0]);
+    int b = eb->rxstate[1] == EB_RX_ARMED || (eb->rxstate[1] == EB_RX_FULL && eb->rxtaken[1]);
+
+    return EB_XCVRUP | (eb->sysei ? EB_SYSEI : 0) | (b ? EB_RBBSW : 0) | (a ? EB_RBASW : 0) |
+           (eb->xmit_owned ? EB_XBUFSW : 0) | (eb->b_before_a ? EB_BBASW : 0);
 }
 
 static void eb_write_aux(EtherBoxType *eb, uint8 data)
@@ -568,8 +576,11 @@ static uint8 eb_register_read(EtherBoxType *eb, int advance)
     case EB_RCVBUFA:
     case EB_RCVBUFB:
         v = eb->rcvbuf[r - EB_RCVBUFA][eb->bbp];
-        if (advance && eb->bbp == 0)
+        if (advance && eb->bbp == 0 && eb->rxstate[r - EB_RCVBUFA] == EB_RX_FULL)
+        {
             eb->rxtaken[r - EB_RCVBUFA] = 1;
+            eb_update_irq(eb);
+        }
         break;
     default: // ACTADDR0-5
         v = eb->actaddr[r];

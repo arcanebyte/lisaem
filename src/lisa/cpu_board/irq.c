@@ -612,6 +612,19 @@ void get_next_timer_event(void)
                 }
             }
 
+            if (via[i].EtherBox)
+            {
+                // EtherBox transmit done, interrupt retry or receive poll; overdue events run right away
+                XTIMER e = etherbox_next_event(via[i].EtherBox);
+                if (e > 0 && e < cpu68k_clocks)
+                    e = cpu68k_clocks;
+                if (e > 0 && cpu68k_clocks_stop > e)
+                {
+                    cpu68k_clocks_stop = e;
+                    next_expired_timer = CYCLE_TIMER_VIAn_CA1(i);
+                }
+            }
+
 #ifdef DEBUG
             if (i < 3 || via[i].active)
             {
@@ -1120,6 +1133,8 @@ void check_current_timer_irq(void)
         DEBUG_LOG(0, "Handling ProFile busy period on via %d", i);
         if (V->ProFile)
             VIAProfileLoop(i, V->ProFile, PROLOOP_EV_NUL);
+        if (V->EtherBox)
+            etherbox_timer(V->EtherBox);
 
         next_expired_timer = 0;
         get_next_timer_event();

@@ -164,6 +164,7 @@ LisaConfigFrame::LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig)
     pportopts[0] = wxT("ProFile");
     pportopts[1] = wxT("ADMP");
     pportopts[2] = wxT("Nothing");
+    pportopts[3] = wxT("EtherBox");
 
     wpportopts[0] = wxT("Widget");
     wpportopts[1] = wxT("ADMP");
@@ -753,10 +754,11 @@ wxPanel *LisaConfigFrame::CreateSlotConfigPage(wxWindow *parent, int slot)
     {
         wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, slotports[slot], _T("Upper Parallel Port (Connector 2 in LOS)"));
         pportboxh[slot] = new wxRadioBox(slotports[slot], wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize,
-                                         3, pportopts, 0, wxRA_SPECIFY_COLS);
-        if (cu.IsSameAs(_T("PROFILE"), false))   pportboxh[slot]->SetSelection(0);
-        else if (cu.IsSameAs(_T("ADMP"), false)) pportboxh[slot]->SetSelection(1);
-        else                                     pportboxh[slot]->SetSelection(2);
+                                         4, pportopts, 0, wxRA_SPECIFY_COLS);
+        if (cu.IsSameAs(_T("PROFILE"), false))       pportboxh[slot]->SetSelection(0);
+        else if (cu.IsSameAs(_T("ADMP"), false))     pportboxh[slot]->SetSelection(1);
+        else if (cu.IsSameAs(_T("ETHERBOX"), false)) pportboxh[slot]->SetSelection(3);
+        else                                         pportboxh[slot]->SetSelection(2);
         g->Add(pportboxh[slot], 0, wxALL, B);
 
         wxBoxSizer *r = new wxBoxSizer(wxHORIZONTAL);
@@ -772,10 +774,11 @@ wxPanel *LisaConfigFrame::CreateSlotConfigPage(wxWindow *parent, int slot)
     {
         wxStaticBoxSizer *g = new wxStaticBoxSizer(wxVERTICAL, slotports[slot], _T("Lower Parallel Port (Connector 1 in LOS)"));
         pportboxl[slot] = new wxRadioBox(slotports[slot], wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize,
-                                         3, pportopts, 0, wxRA_SPECIFY_COLS);
-        if (cl.IsSameAs(_T("PROFILE"), false))   pportboxl[slot]->SetSelection(0);
-        else if (cl.IsSameAs(_T("ADMP"), false)) pportboxl[slot]->SetSelection(1);
-        else                                     pportboxl[slot]->SetSelection(2);
+                                         4, pportopts, 0, wxRA_SPECIFY_COLS);
+        if (cl.IsSameAs(_T("PROFILE"), false))       pportboxl[slot]->SetSelection(0);
+        else if (cl.IsSameAs(_T("ADMP"), false))     pportboxl[slot]->SetSelection(1);
+        else if (cl.IsSameAs(_T("ETHERBOX"), false)) pportboxl[slot]->SetSelection(3);
+        else                                         pportboxl[slot]->SetSelection(2);
         g->Add(pportboxl[slot], 0, wxALL, B);
 
         wxBoxSizer *r = new wxBoxSizer(wxHORIZONTAL);

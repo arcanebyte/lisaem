@@ -152,6 +152,40 @@ $ sudo ./build.sh install
 
 The `LisaEm.app` application will be installed in the Applications folder.
 
+### Networking with libslirp (optional)
+
+The EtherBox, a 3Com Ethernet interface on a dual parallel card port used by UniPlus, can reach the host and the internet through [libslirp](https://gitlab.freedesktop.org/slirp/libslirp), the user-mode network stack QEMU uses. No root access or host network interface is needed. It is off unless you ask for it:
+
+```
+$ brew install libslirp              # macOS; on Debian/Ubuntu: apt install libslirp-dev
+$ ./build.sh clean build --with-slirp
+```
+
+`--with-slirp` finds Homebrew's libslirp by itself. Elsewhere give its prefix, the directory holding `include/slirp/libslirp.h` and `lib/`, for example `--with-slirp=/usr`. Changing the option forces a clean build.
+
+libslirp is linked as a shared library, and it needs glib. A binary built this way only runs where the same libslirp is installed, so don't use it for a binary you distribute. Homebrew's libslirp is built for one CPU architecture only, so the build must be for that architecture as well.
+
+Without `--with-slirp` the EtherBox still works, but its only backends are `none`, which drops every frame, and `responder`, a test backend.
+
+#### Using the EtherBox
+
+In Preferences, put a Dual Parallel card in a slot and select **EtherBox** for one of its ports. UniPlus V.1.5+ `unix.net` expects its etherbox on unit 5, the upper port of the card in slot 2.
+
+For now the backend and network are chosen with environment variables, so start LisaEm from a terminal, for example `LisaEm.app/Contents/MacOS/lisaem.sh`:
+
+| Variable | Meaning |
+|---|---|
+| `LISAEM_ETHERBOX_BACKEND` | `none` (default), `responder`, or `slirp` |
+| `LISAEM_ETHERBOX_SLIRP_NET` | slirp network, always /24 (default `10.0.2.0`). The host is `.2` and DNS is `.3`. |
+| `LISAEM_ETHERBOX_GUEST` | the Lisa's address, used by port forwards (default `.15` on that network) |
+| `LISAEM_ETHERBOX_HOSTFWD` | port forwards from the host's `127.0.0.1` to the Lisa, comma separated, `tcp:` or `udp:` host port then Lisa port, for example `tcp:5555:5000,tcp:2323:23` |
+| `LISAEM_ETHERBOX_TRACE` | `1` for `~/lisaem-etherbox-trace.log`, or a file name: register access, frames and backend events |
+| `LISAEM_ETHERBOX_PCAP` | `1` for `~/lisaem-etherbox.pcap`, or a file name: every frame sent and received, for Wireshark |
+
+Inside slirp's network, connecting to the host address (`10.0.2.2` by default) reaches services listening on the host's loopback interface.
+
+Port forwards listen on `127.0.0.1` only, so connect to that address rather than `localhost`, which may try IPv6 `::1` first. On macOS, avoid host ports 5000 and 7000: the AirPlay Receiver listens on them on every address. A forward can still bind `127.0.0.1` on those ports without an error, but connections can end up at AirPlay instead of the Lisa.
+
 ### Compiling LisaEm (for all other platforms):
 
 You will need wxWidgets 3.0.4-3.2.9 installed. Do not use system provided wxWidgets, but rather build your own using the scripts in the scripts directory as mentioned above.

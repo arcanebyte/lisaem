@@ -2029,21 +2029,11 @@ void lisa_wb_Oxd800_par_via2(uint32 addr, uint8 xvalue)
     case T1LL2: // Timer 1 Low Order Latch
         DEBUG_LOG(0, "T1LL2");
 
-        via[2].via[T1CL] = xvalue; // 4 T1LC actually writes to T1LL only
+        // Register 6 only loads the low latch, as on the 6522: the counter is untouched and the timer
+        // doesn't start (writing T1CH does that).  The boot ROM's VIA test writes all 256 values here.
         via[2].via[T1LL] = xvalue;
-        via[2].t1_e = get_via_te_from_timer((via[2].via[T1LH] << 8) | via[2].via[T1LL]);
         via[2].last_port = port;
-
-        FIX_CLKSTOP_VIA_T1(2); // update cpu68k_clocks_stop if needed
-
-        // #ifdef DEBUG
-        via[2].t1_set_cpuclk = cpu68k_clocks;
-        // #endif
-        via_running = 1;
-        DEBUG_LOG(0, "ll-t1clk:%d T1 will now expire at:%llx - %llx cycles from now - clock now:%llx",
-                  ((via[2].via[T1LH] << 8) | via[2].via[T1LL]), via[2].t1_e, via[2].t1_e - cpu68k_clocks, cpu68k_clocks);
-
-        return; // Set timer2 low byte
+        return;
 
     case T1LH2:
         DEBUG_LOG(0, "T1LH2");
@@ -2486,7 +2476,7 @@ uint8 lisa_rb_Oxd800_par_via2(uint32 addr)
 
     case T1LL2: // Timer 1 Low Order Latch
         DEBUG_LOG(0, "T1LL2=%02x", (via[2].via[T1LL]));
-        VIA_CLEAR_IRQ_T1(2); // clear T1 irq on T1 read low or write high - does this clear the timer? // 2020.11.06 re-enabling this and fixing via #
+        // reading the latch doesn't clear the T1 flag on the 6522; reading T1CL does
         via[2].last_port = port;
 
         return (via[2].via[T1LL]);
@@ -2953,7 +2943,7 @@ uint8 lisa_rb_ext_2par_via(ViaType *V, uint32 addr)
 
     case T1LL2: // Timer 1 Low Order Latch
         DEBUG_LOG(0, "T1LL2=%02x", (V->via[T1LL]));
-        VIA_CLEAR_IRQ_T1(V->vianum);
+        // reading the latch doesn't clear the T1 flag on the 6522; reading T1CL does
         V->last_port = port;
         return (V->via[T1LL]);
 
@@ -3227,21 +3217,11 @@ void lisa_wb_ext_2par_via(ViaType *V, uint32 addr, uint8 xvalue)
     case T1LL2: // Timer 1 Low Order Latch
         DEBUG_LOG(0, "T1LL2");
 
-        V->via[T1CL] = xvalue; // 4 T1LC actually writes to T1LL only
+        // Register 6 only loads the low latch, as on the 6522: the counter is untouched and the timer
+        // doesn't start (writing T1CH does that).
         V->via[T1LL] = xvalue;
-        V->t1_e = get_via_te_from_timer((V->via[T1LH] << 8) | V->via[T1LL]);
         V->last_port = port;
-
-        FIX_CLKSTOP_VIA_T1(V->vianum); // update cpu68k_clocks_stop if needed
-
-        // #ifdef DEBUG
-        V->t1_set_cpuclk = cpu68k_clocks;
-        // #endif
-        via_running = 1;
-        DEBUG_LOG(0, "ll-t1clk:%d T1 will now expire at:%llx - %llx cycles from now - clock now:%llx",
-                  ((V->via[T1LH] << 8) | V->via[T1LL]), V->t1_e, V->t1_e - cpu68k_clocks, cpu68k_clocks);
-
-        return; // Set timer2 low byte
+        return;
 
     case T1LH2:
         DEBUG_LOG(0, "T1LH2");

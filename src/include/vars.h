@@ -638,6 +638,7 @@ ACGLOBAL(uint8, highest_bit_val_inv[],
 #define CYCLE_TIMER_VIAn_T1_TIMER(x) ((x))
 #define CYCLE_TIMER_VIAn_T2_TIMER(x) ((x) + 128)
 #define CYCLE_TIMER_VIAn_SHIFTREG(x) ((x) + 64)
+#define CYCLE_TIMER_VIAn_CA1(x) ((x) + 32) // end of the busy period of the ProFile on this VIA
 
 #define CYCLE_TIMER_VIA1_T1_TIMER (1)
 #define CYCLE_TIMER_VIA1_T2_TIMER (1 + 128)
@@ -818,11 +819,12 @@ typedef struct
   // DC42 contains the ProFilename and file handler
   // char  ProFileFileName[FILENAME_MAX]; // the file name for this Profile disk image to open;
 
-  XTIMER clock_e;     // used for timeouts - this is in relation to cpu68k_clocks
+  XTIMER clock_e;     // end of the drive's busy period in cpu68k_clocks, 0 when not busy (scheduled by irq.c)
   XTIMER alarm_len_e; // used for timeouts - how long was the delay set for in clock_e event expiration
 
   int vianum;
   uint16 last_cmd;
+  uint8 reply; // handshake reply byte the drive last put on the bus: $01, $02-$04 or $06
 } ProFileType;
 
 typedef struct
@@ -1879,6 +1881,11 @@ extern void get_profile_spare_table(ProFileType *P);
 #define PROLOOP_EV_ORA 2 // event=2 <- write to ORA
 #define PROLOOP_EV_ORB 3 // event=3 <- write to ORB
 #define PROLOOP_EV_NUL 4 // event=4 <- null event - called occasionally by event handling to allow timeouts
+#define PROLOOP_EV_IRA_NOSTROBE 5 // event=5 <- read IRA without /PSTRB (register 15, or CA2 not in handshake/pulse mode)
+#define PROLOOP_EV_ORA_NOSTROBE 6 // event=6 <- write ORA without /PSTRB (register 15, DDRA change, or CA2 not in handshake/pulse mode)
+#define PROLOOP_EV_STROBE 7       // event=7 <- /PSTRB from PCR (CA2 manual output taken from low to high)
+
+extern void profile_schedule_event(ProFileType *P, XTIMER delay);
 
 /****** Video ***********/
 

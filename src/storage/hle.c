@@ -849,8 +849,8 @@ void apply_uniplus_hacks(void)
       ALERT_LOG(0, "Patching for UniPlus v1.1 sunix");
       ALERT_LOG(0, "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
 
-      lisa_wb_ram(0x0001fe24, 0x60);   // skip assert BSY 1
-      lisa_wb_ram(0x0001ff38, 0x01);   // increase timeout to ludicrous length
+      // The ProFile handshake patches (skip BSY assert at 0x1fe24, longer timeout at 0x1ff38) are gone:
+      // profile.c now keeps BSY the way a real drive does.
       lisa_wl_ram(0x0000c188, 0xf33d); // time speedup patch   TST.W      $00022d46/BNE.W      $0000c182
 
       uniplus_hacks = 0; // turn off short-circuit logic-AND flag
@@ -863,9 +863,8 @@ void apply_uniplus_hacks(void)
       ALERT_LOG(0, "Patching for UNIPLUS v1.4");
       ALERT_LOG(0, "====================================================================");
 
-      // these two are needed to pass handshaking in Uni+ with our shitty profile emulation
-      lisa_wb_ram(0x00020f9c, 0x60);   // skip assert BSY
-      lisa_wb_ram(0x000210b0, 0x01);   // increase timeout to ludicrous length
+      // The ProFile handshake patches (skip BSY assert at 0x20f9c, longer timeout at 0x210b0) are gone:
+      // profile.c now keeps BSY the way a real drive does.
       lisa_wl_ram(0x0000c188, 0xf33d); // time speedup patch   TST.W      $00022d46/BNE.W      $0000c182
 
       // these are optional for HLE acceleration of ProFile reads/writes

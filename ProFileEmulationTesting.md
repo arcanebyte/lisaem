@@ -19,20 +19,32 @@ This file tracks testing of the `profile-emulation` branch. The branch replaces 
   - The COPS VIA keeps its previous port A flag clearing.
 - **`src/storage/hle.c`:**
   - Removed from `apply_uniplus_hacks()`: the UniPlus 1.4 (`0x20f9c`, `0x210b0`) and sunix 1.1 (`0x1fe24`, `0x1ff38`) BSY-assert and timeout RAM patches.
-  - Kept: the `0xc188` idle speed-up and the optional HLE intercepts.
+  - Kept: the `0xc188` idle speed-up and the console-terminal hooks.
+- **ProFile HLE speed-ups removed** (`hle.c`, `profile.c`, `rom.c`, preferences):
+  - the LOS 3.1 read/write loops, which were installed regardless of the setting;
+  - the UniPlus 1.4 read-status/tags/data and write intercepts;
+  - the boot ROM `PROREAD` patch;
+  - the "Hard drive acceleration" checkbox, which only controlled these.
+  With the drive emulated faithfully and the CPU throttled to Lisa speed, the OS's own byte loops cost nothing that matters.
+- **IFR bit 7** (parallel VIAs): set only while a flag is both set and enabled (`IFR & IER`), as on the 6522. Previously any flag set it; that was hidden while IER writes cleared masked flags.
 
 ## Tested so far
 
-"Hard drive acceleration" (HLE) was unchecked for all of these.
+"Hard drive acceleration" (HLE) was unchecked for all of these, or had already been removed.
 
 | OS / kernel | Port | Result |
 |---|---|---|
 | UniPlus V.1.5+ rebuilt `unix.nonet` | built-in | Boots. `find / -print`, `sum`, and `cp`/`cmp`/`rm` round trips pass. |
 | UniPlus V.1.5+ rebuilt `unix.net` | built-in | Boots. Mounts the second filesystem on a 20 MB drive (`/dev/p0e`, blocks 19456–38911). Loopback TCP answers (`connect` gets "Connection refused"). |
 | UniPlus 1.4 stock `/unix`, without the removed RAM patches | built-in | Boots |
-| Lisa Office System 3.1 | built-in | Opens OK. The LOS 3.1 HLE patches were still active (see below). |
+| Lisa Office System 2 | built-in | Boots |
+| Lisa Office System 3.1 | built-in | Boots with I/O ROM 88, on this branch (HLE removed) and on `master` alike. With another I/O ROM it stops with system error 10738 on both builds. |
+| Xenix (10 MB ProFile) | built-in | Works with I/O ROM A8 (Xenix no longer gets its fake BSY/CA1 interrupt flags). Does not boot with I/O ROM 88; not yet checked on `master`, reinstall pending. |
+| MacWorks | built-in | Hangs at "Loading......." on both this branch and `master`, with either I/O ROM. Not a regression; the install is being redone. |
 
 A "read error" on `/dev/p0e` along the way turned out to be the kernel's own partition table (entry e was `{0, 0}` in `pro.c`), not the emulation. The disk image checked out clean block by block.
+
+**Error 10738** is "Can't find a required driver for the boot device" (Lisa Pascal 3.0 docs). An LOS image carries boot-device information in PRAM that must match the Lisa model's I/O ROM: an image made on a 2/10 (I/O ROM 88) fails on other ROMs. Fix: set the I/O ROM to match, or invalidate PRAM from LisaBug (`sm fcc180 00ff 0055 00aa`). See [LisaList2](https://lisalist2.com/index.php?topic=656.0). Parallel-port traces of that failure showed every disk read completing normally.
 
 Before this branch, the rebuilt UniPlus kernels failed every boot. They hit `ASSERTION BSY`, then "EXCESSIVE DISK DELAY", then `panic: iinit`, or intermittent "failed to issue cmd to disk".
 
@@ -44,18 +56,15 @@ Before this branch, the rebuilt UniPlus kernels failed every boot. They hit `ASS
    cp /unix /mnt/u && cmp /unix /mnt/u && rm /mnt/u; umount /mnt
    ```
    Slot-card ProFile I/O used to hang. Then try booting from a slot-card ProFile.
-2. **LOS 3.1 on the full emulation path.** `apply_los31_hacks()` (`src/storage/hle.c`) only checks `los31_hle`, which always starts at 1. It ignores the "Hard drive acceleration" checkbox, so LOS 3.1 always uses its HLE read/write loops and bypasses per-byte strobes.
-   - To test without them, gate it on `hle` as well: `if (!los31_hle || !hle) return;`. That is a separate fix, not yet made.
-   - Then rebuild, boot LOS with acceleration unchecked, and open, edit and save a document.
+2. **LOS 2 and LOS 3.1 install and document work.** Fresh I/O ROM A8 and 88 installs of each: install, then open, edit and save a document, so writes are exercised.
 3. **Other OSes, on the built-in port and on a slot card where supported:**
    - Lisa Office System 1.x/2.x, including installing from floppies
    - Pascal Workshop
-   - MacWorks XL / MacWorks Plus
+   - MacWorks XL / MacWorks Plus (retest after a fresh install)
    - Xenix. Its UniPlus/Xenix CA1 fakes were removed, and Xenix relies on T2 one-shot behaviour.
    - UniPlus sunix 1.1
    - LisaTest's ProFile tests
 4. **Boot ROM paths.** Booting from ProFile with the H ROM and with other ROM revisions. The spare-table read (block $FFFFFF) during slot scanning.
-5. **UniPlus 1.4 with "Hard drive acceleration" checked.** Its HLE intercepts set `StateMachineStep = 12` and read `DataBlock` directly. The state numbers and buffer layout were kept for this, but it hasn't been run.
 
 ## What to look for
 

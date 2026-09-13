@@ -26,6 +26,7 @@ This file tracks testing of the `profile-emulation` branch. The branch replaces 
   - the boot ROM `PROREAD` patch;
   - the "Hard drive acceleration" checkbox, which only controlled these.
   With the drive emulated faithfully and the CPU throttled to Lisa speed, the OS's own byte loops cost nothing that matters.
+- **Timer 1 latch** (parallel VIAs): writing register 6 only loads the low latch, and reading it doesn't clear the T1 flag, as on the 6522. LisaEm used to start Timer 1 on every register-6 write, so the boot ROM's VIA latch test (`VIA2CHK`/`VIATST`) armed the timer repeatedly. After a Lisa power-off/on within one LisaEm session, a leftover T1 flag reached UniPlus. The kernel's level-1 handler then took it for a parallel-port interrupt and scanned slot 1, panicking with "kernel memory management error" when slot 1 was empty. Master hid it because IER writes cleared flags. The COPS VIA still has the old register-6 behaviour.
 - **IFR bit 7** (parallel VIAs): set only while a flag is both set and enabled (`IFR & IER`), as on the 6522. Previously any flag set it; that was hidden while IER writes cleared masked flags.
 
 ## Tested so far

@@ -1,6 +1,6 @@
 # ProFile emulation: testing status and what's left
 
-This file tracks testing of the `profile-emulation` branch. The branch replaces LisaEm's ProFile drive state machine and the parallel-port 6522 flag handling with protocol- and datasheet-accurate behaviour, and removes the UniPlus-specific handshake patches.
+This file tracks testing of the ProFile and VIA emulation changes (PR #55, merged 13 September 2026). The branch replaces LisaEm's ProFile drive state machine and the parallel-port 6522 flag handling with protocol- and datasheet-accurate behaviour, and removes the UniPlus-specific handshake patches.
 
 ## What changed
 
@@ -52,21 +52,42 @@ Before this branch, the rebuilt UniPlus kernels failed every boot. They hit `ASS
 
 ## Still to test
 
-1. **Dual parallel card.** Mount and read/write a ProFile on a slot-card port, for example from UniPlus:
-   ```
-   mount /dev/p2h /mnt; find /mnt -print > /dev/null
-   cp /unix /mnt/u && cmp /unix /mnt/u && rm /mnt/u; umount /mnt
-   ```
-   Slot-card ProFile I/O used to hang. Then try booting from a slot-card ProFile.
-2. **LOS 2 and LOS 3.1 install and document work.** Fresh I/O ROM A8 and 88 installs of each: install, then open, edit and save a document, so writes are exercised.
-3. **Other OSes, on the built-in port and on a slot card where supported:**
-   - Lisa Office System 1.x/2.x, including installing from floppies
-   - Pascal Workshop
-   - MacWorks XL 3.0: a clean install done on this branch (the boot so far used a disk installed on an older build), and MacWorks Plus
-   - Xenix. Its UniPlus/Xenix CA1 fakes were removed, and Xenix relies on T2 one-shot behaviour.
-   - UniPlus sunix 1.1
+These changes are merged (PR #55). The rest of the test plan, in priority order:
+
+1. **Dual parallel card ProFile.** Nothing has been run against a ProFile on a slot card since the change. Slot-card ProFile I/O used to hang.
+   - Put a ProFile image on a dual parallel card port and, from UniPlus, mount it and read/write:
+     ```
+     fsck /dev/rp2h
+     mount /dev/p2h /mnt; find /mnt -print > /dev/null
+     cp /unix /mnt/u && cmp /unix /mnt/u && rm /mnt/u; umount /mnt
+     ```
+     Use the device node for the port it's on (LisaEm slot 1 high answered as `/dev/p2h`, low as `/dev/p1h`).
+   - Then boot from a slot-card ProFile, from the boot ROM's startup menu.
+   - Run it with a second ProFile on the built-in port at the same time, so interrupts from both are exercised.
+2. **Fresh LOS installs, both I/O ROMs.** Install LOS 2 and LOS 3.1 from floppies onto blank ProFile images with I/O ROM A8 and with 88. After each install, boot, then open, edit and save a document. The install and the save exercise writes.
+3. **Pascal Workshop.** A Workshop image stopped with system error 10100 on this branch, with both A8 and 88. The trace showed all 693 reads and 20 writes completing normally, with no disk errors.
+   - Boot the same image on a build from before PR #55 (for example LisaEm 2.0.0).
+   - If it fails the same way, reinstall Workshop on the ROM you use and retest.
+   - If it boots there, it's a regression. Trace IFR/IER access on the parallel VIA after the last write: Workshop's ProFile driver is fully interrupt-driven and flips CA1 polarity (PCR `$6A`/`$6B`) around each handshake.
+4. **Xenix with I/O ROM 88.** Works with A8. With 88 (10 MB ProFile) it doesn't boot. Check the same image on a pre-#55 build, then reinstall with 88.
+5. **Regression checks for the Timer 1 latch fix.**
+   - Card in slot 1, boot UniPlus `unix.net`, shut the Lisa down with LisaEm still open.
+   - Remove the card, power on and boot. It must not panic with "kernel memory management error" at `vaddr = 0xFC2069`.
+   - Also power-cycle several times within one session with LOS and Xenix.
+6. **Other software:**
+   - Lisa Office System 1.x
+   - MacWorks XL 3.0: install on the current build and boot it (so far the boot used a disk installed on an older build)
+   - MacWorks Plus
+   - UniPlus sunix 1.1: the installer kernel, which also lost its handshake patches
    - LisaTest's ProFile tests
-4. **Boot ROM paths.** Booting from ProFile with the H ROM and with other ROM revisions. The spare-table read (block $FFFFFF) during slot scanning.
+7. **Boot ROM variants.** Boot from ProFile with other ROM revisions than H. Check that the spare-table read (block `$FFFFFF`) during slot scanning still identifies drives on slot cards.
+8. **COPS VIA Timer 1 latch.** Not yet fixed, see `todo.md`. When it is, retest keyboard, mouse and clock on the OSes above.
+
+**Known issues not caused by PR #55** (they also fail on pre-#55 builds). Worth separate issues:
+- **MacWorks 1.1h** hangs at "Loading......." or aborts LisaEm, also on `eb9c325` (December 2025).
+- **Mac-side crash after an abort:** moving the mouse over the window while the "Emulation aborted!" alert is up can crash LisaEm itself (a null-pointer dereference in the window event handling).
+- **Slot interrupt check never unset:** once a slot card has been connected during a session, the slot's interrupt check (`get_exs0/1/2_pending_irq`) is never switched back to "empty" when the card is removed.
+- **Build:** `build.sh` adds every `include` directory under the tree, so a git worktree nested inside the checkout breaks the build. It also doesn't rebuild C files after a header changes.
 
 ## What to look for
 

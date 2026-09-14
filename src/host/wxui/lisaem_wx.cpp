@@ -6839,12 +6839,14 @@ void LisaWin::OnMouseMove(wxMouseEvent &event)
     wxString str;
     int vbX = 0, vbY = 0; // scrollbar location
     mousemoved++;
-    wxPoint pos = event.GetLogicalPosition(skins_on ? *my_skinDC : *my_memDC);
 
-    if (skins_on && my_skin == NULL)
+    // a message box can run the event loop while the display is being rebuilt (my_memDC is NULL during a
+    // video mode change), so check before using the DCs
+    if (skins_on && (my_skin == NULL || my_skinDC == NULL))
       return;
-    if (my_lisabitmap == NULL)
+    if (my_lisabitmap == NULL || my_memDC == NULL)
       return;
+    wxPoint pos = event.GetLogicalPosition(skins_on ? *my_skinDC : *my_memDC);
       // in full screen mode, show menu bar when above line. or maybe disable this and always show the menu bar, but that's fugly. :(  Grrr.
 
 // disable mouse if core tester is running

@@ -314,6 +314,9 @@ EtherBoxBackend *etherbox_slirp_open(void)
     cfg.vhostname = "lisaem";
     cfg.if_mtu = SL_GUEST_MTU;
     cfg.if_mru = 1500;
+    // slirp's own TFTP server on the host address (.2), serving one directory read-only
+    if (getenv("LISAEM_ETHERBOX_TFTP") && *getenv("LISAEM_ETHERBOX_TFTP"))
+        cfg.tftp_path = getenv("LISAEM_ETHERBOX_TFTP");
 
     guest.s_addr = htonl(net | 15);
     sl_env_addr("LISAEM_ETHERBOX_GUEST", &guest);
@@ -347,6 +350,11 @@ EtherBoxBackend *etherbox_slirp_open(void)
     etherbox_backend_trace("slirp %s: network %s/24, host .2, DNS .3, Lisa %s", slirp_version_string(), n, g);
     ALERT_LOG(0, "EtherBox: slirp %s, network %s/24, Lisa %s", slirp_version_string(), n, g);
 
+    if (cfg.tftp_path)
+    {
+        etherbox_backend_trace("slirp: TFTP server on %s.2 serving %s", n, cfg.tftp_path);
+        ALERT_LOG(0, "EtherBox: slirp TFTP server serving %s", cfg.tftp_path);
+    }
     if (getenv("LISAEM_ETHERBOX_HOSTFWD"))
         sl_add_forwards(s, getenv("LISAEM_ETHERBOX_HOSTFWD"), guest);
     return be;

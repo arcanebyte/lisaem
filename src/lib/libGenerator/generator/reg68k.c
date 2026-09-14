@@ -43,6 +43,28 @@ t_sr reg68k_sr;
     return x;              \
   }
 
+// A bus or address error while the 68000 is stacking an exception is a double bus fault: the real CPU halts
+// until reset.  LisaEm has no halted-but-powered state, so stop the CPU and power the Lisa off with a message,
+// rather than quitting the emulator.  (UniPlus's reboot, which jumps to the ROM monitor with an unusable stack,
+// gets here.)
+#define DOUBLE_BUS_FAULT(what)                                                                                     \
+  {                                                                                                                \
+    char dbf_msg[256];                                                                                             \
+    snprintf(dbf_msg, sizeof(dbf_msg),                                                                             \
+             "The 68000 halted: double bus fault while %s for exception vector %ld at PC %08lx (SP %08lx).\n\n"  \
+             "A real Lisa would hang here until reset. The Lisa will be powered off.",                            \
+             what, (long)vno, (long)oldpc, (long)reg68k_regs[15]);                                                 \
+    ALERT_LOG(0, "%s", dbf_msg);                                                                                   \
+    abort_opcode = 0;                                                                                              \
+    cpu68k_clocks = cpu68k_clocks_stop;                                                                            \
+    regs.stop = 1;                                                                                                 \
+    messagebox(dbf_msg, "68000 halted");                                                                           \
+    save_pram();                                                                                                   \
+    profile_unmount();                                                                                             \
+    lisa_powered_off();                                                                                            \
+    return;                                                                                                        \
+  }
+
 // static const int insetjmpland=1; //RA20190601
 #define insetjmpland 1 // RA20190601 -- so unused code will get optimzied out
 
@@ -3108,14 +3130,14 @@ void reg68k_internal_vector(int vno, uint32 oldpc, uint32 addr_error)
   A7PUSH_LONG(oldpc);
   if (abort_opcode == 1)
   {
-    EXIT(783, 0, "Doh! got abort_opcode=1 on push pc %s!\n", __FUNCTION__);
+    DOUBLE_BUS_FAULT("pushing the PC");
   }
 
   DEBUG_LOG(0, "PUSH SR %04x context:%d", saved_sr, context);
   A7PUSH_WORD(saved_sr);
   if (abort_opcode == 1)
   {
-    EXIT(784, 0, "Doh! got abort_opcode=1 on push sr in %s!\n", __FUNCTION__);
+    DOUBLE_BUS_FAULT("pushing the SR");
   }
   // "Short format 0 only four words are to be removed from the top of the stack. SR and PC are loaded from the stack frame."
   abort_opcode = 0;
@@ -3137,19 +3159,19 @@ void reg68k_internal_vector(int vno, uint32 oldpc, uint32 addr_error)
     A7PUSH_WORD(InstructionRegister);
     if (abort_opcode == 1)
     {
-      EXIT(784, 0, "Doh! got abort_opcode=1 on push IR    in %s!\n", __FUNCTION__);
+      DOUBLE_BUS_FAULT("pushing the instruction register");
     }
     DEBUG_LOG(0, "PUSH AE:%08lx context:%ld", (long)addr_error, (long)context);
     A7PUSH_LONG(addr_error);
     if (abort_opcode == 1)
     {
-      EXIT(784, 0, "Doh! got abort_opcode=1 on push ADDRC in %s!\n", __FUNCTION__);
+      DOUBLE_BUS_FAULT("pushing the fault address");
     }
     DEBUG_LOG(0, "PUSH BF:%04lx context:%ld", (long)busfunctioncode, (long)context);
     A7PUSH_WORD(busfunctioncode);
     if (abort_opcode == 1)
     {
-      EXIT(784, 0, "Doh! got abort_opcode=1 on push BUSFN in %s!\n", __FUNCTION__);
+      DOUBLE_BUS_FAULT("pushing the bus function code");
     }
 
     // prevent autovectors from interrupting BUS/ADDR exception ISR's.

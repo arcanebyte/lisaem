@@ -10585,17 +10585,8 @@ void LisaScreenRefresh(void)
 
 
 
-static float normalthrottle=0;
-
 extern "C" void sound_off(void)
 {
-    // restore throttle
-    if (normalthrottle != 0)
-    {
-      my_lisaframe->throttle = normalthrottle;
-      update_menu_checkmarks();
-    } // updateThrottleMenus(my_lisaframe->throttle);}
-
     if (cpu68k_clocks - my_lisaframe->lastclk < 50000)
       return; // prevent sound from shutting down immediately
     wxSound::Stop();
@@ -10605,10 +10596,6 @@ extern "C" void sound_off(void)
 
 extern "C" void sound_play(uint16 t2)
 {
-    // temporarily slow down CPU durring beeps so that they're fully played.
-    normalthrottle = my_lisaframe->throttle;
-    update_menu_checkmarks(); // updateThrottleMenus(5.0);
-
     int samples = 22050 * 2; // a second
 
     int data_size = 0;

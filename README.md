@@ -179,6 +179,7 @@ For now the backend and network are chosen with environment variables, so start 
 | `LISAEM_ETHERBOX_SLIRP_NET` | slirp network, always /24 (default `10.0.2.0`). The host is `.2` and DNS is `.3`. |
 | `LISAEM_ETHERBOX_GUEST` | the Lisa's address, used by port forwards (default `.15` on that network) |
 | `LISAEM_ETHERBOX_HOSTFWD` | port forwards from the host's `127.0.0.1` to the Lisa, comma separated, `tcp:` or `udp:` host port then Lisa port, for example `tcp:5555:5000,tcp:2323:23` |
+| `LISAEM_ETHERBOX_TFTP` | a directory for slirp's built-in TFTP server at the host address (`.2`, port 69). It only reads (the Lisa can `get` but not `put`) and only does binary transfers, so use `mode binary` in the Lisa's `tftp` |
 | `LISAEM_ETHERBOX_TRACE` | `1` for `~/lisaem-etherbox-trace.log`, or a file name: register access, frames and backend events |
 | `LISAEM_ETHERBOX_PCAP` | `1` for `~/lisaem-etherbox.pcap`, or a file name: every frame sent and received, for Wireshark |
 

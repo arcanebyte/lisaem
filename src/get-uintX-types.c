@@ -92,8 +92,8 @@ for (i=0; i<5; i++) {
       if (! h[sz[i]] ) {
             h[sz[i]]=1;
 
-            fprintf(out,"typedef          %-9s %s  int%d;\n",   szs[i], (sz[i]<2 ? " ":""), sz[i]*8 );  fflush(out);
-            fprintf(out,"typedef          %-9s %s sint%d;\n",   szs[i], (sz[i]<2 ? " ":""), sz[i]*8 );  fflush(out);
+            fprintf(out,"typedef   signed %-9s %s  int%d;\n",   szs[i], (sz[i]<2 ? " ":""), sz[i]*8 );  fflush(out);
+            fprintf(out,"typedef   signed %-9s %s sint%d;\n",   szs[i], (sz[i]<2 ? " ":""), sz[i]*8 );  fflush(out);
             fprintf(out,"typedef unsigned %-9s %s uint%d;\n",   szs[i], (sz[i]<2 ? " ":""), sz[i]*8 );  fflush(out);
 
             if (errno) {fprintf(stderr,"Error occured at i=%d.\n",i); perror("couldn't write to machine.h because "); fclose(out); return -1;}

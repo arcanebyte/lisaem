@@ -562,6 +562,8 @@ void flag_via_t1_irq(int i)
 *                                                                                   *
 *  This must be called whenever any event timer changes!                            *
 \***********************************************************************************/
+static int timer_event_mid_opcode = 0;
+
 void get_next_timer_event(void)
 {
     int i;
@@ -696,7 +698,18 @@ void get_next_timer_event(void)
             }
 
             if (!!(via[i].via[IER] & via[i].via[IFR]))
-                reg68k_external_autovector(via[i].irqnum); // 2021.03.21 fire interrupt if IFR set to enabled bits
+            {
+                // From an I/O access (reset_video_timing) the CPU is in the
+                // middle of an instruction, and taking the interrupt here
+                // lets the instruction's length be added to the vector
+                // address (seen when 0xFCE01A is read with a COPS interrupt
+                // pending). End the time slice instead so the pending
+                // interrupt is taken after the instruction.
+                if (timer_event_mid_opcode)
+                    cpu68k_clocks_stop = cpu68k_clocks;
+                else
+                    reg68k_external_autovector(via[i].irqnum); // 2021.03.21 fire interrupt if IFR set to enabled bits
+            }
         }
 
     // non-VIA timers - if they're due in this cycle, then see if they're smaller than the current min
@@ -789,10 +802,12 @@ void reset_video_timing(void)
     }
     lastvideotimimgreset = cpu68k_clocks;
 
+    timer_event_mid_opcode = 1;
     get_next_timer_event();
     video_scan = cpu68k_clocks; // keep track of where we are
     virq_start = cpu68k_clocks + FULL_FRAME_CYCLES;
     get_next_timer_event();
+    timer_event_mid_opcode = 0;
 }
 
 void decisecond_clk_tick(void)

@@ -1367,7 +1367,9 @@ t_ipc_table *cpu68k_makeipclist(uint32 pc)
     if (iib->mnemonic == i_Bcc && ipc->src == xpc) // valgrind: ==24726== Conditional jump or move depends on uninitialised value(s)
     {                                              // RA list->pc <- xpc
                                                    /* we have a 2-instruction block ending in a branch to start */
-      ipc = ipcs[instrs - 1 + 1];                  // ipc++
+      // was ipcs[instrs - 1 + 1], one past the last IPC filled
+      // in (NULL or stale), which crashed on the next dereference.
+      ipc = ipcs[instrs - 1];                      // the last IPC
       DEBUG_LOG(200, "ipc is now %p at pc %08lx max %08lx instruction # %ld", ipc, (long)pc, (long)xpc, (long)instrs - 1);
       // Get the IIB, if it's NULL, then get the IIB for an illegal instruction.
 
@@ -1389,6 +1391,9 @@ t_ipc_table *cpu68k_makeipclist(uint32 pc)
 
   //    ipc = ((t_ipc *) (list + 1)) + instrs - 1;
 
+  // ipc is not always the last IPC here (the 2-instruction
+  // case above leaves it on the first, or before this fix on an unset slot).
+  ipc = ipcs[instrs - 1];
   ipc->next = NULL; // next pointer of last IPC is always null as there is no next one yet.
 
   ix = instrs; /*****************/

@@ -429,6 +429,7 @@ enum
   vidmod_3y = 3,    // RePaint_2X3Y
   vidmod_aag = 4,   // RePaint_AAGray
   vidmod_hq35x = 5, // RePaint_HQ35X
+  vidmod_fill1024 = 6, // RePaint_Fill1024
   vidmod_3a = 0x3a  // RePaint_3A;  // consider adding 2x 3x or 4x HQX for this
 };
 
@@ -473,6 +474,7 @@ public:
   void Skins_Repaint_PowerPlane(wxRect &rect, DCTYPE &dc);
 
   int RePaint_HQ35X(int startx, int starty, int width, int height);
+  int RePaint_Fill1024(int startx, int starty, int width, int height);
   int RePaint_AAGray(int startx, int starty, int width, int height);
   int RePaint_AntiAliased(int startx, int starty, int width, int height);
 
@@ -639,6 +641,7 @@ enum
   ID_LISALIST2,
 
   ID_VID_HQ35X,
+  ID_VID_FILL1024,
   ID_VID_AA,
   ID_VID_AAG,
   // ID_VID_SCALED,
@@ -832,6 +835,7 @@ public:
   void OnVideoAntiAliased(wxCommandEvent &event);
   void OnVideoAAGray(wxCommandEvent &event);
   void OnVideoHQ35X(wxCommandEvent &event);
+  void OnVideoFill1024(wxCommandEvent &event);
   // void OnVideoScaled(wxCommandEvent& event);
   void OnVideoDoubleY(wxCommandEvent &event);
   void OnVideoSingleY(wxCommandEvent &event);
@@ -1023,6 +1027,7 @@ EVT_MENU(wxID_PASTE, LisaEmFrame::OnPasteToKeyboard)
 EVT_MENU(ID_VID_AA, LisaEmFrame::OnVideoAntiAliased)
 EVT_MENU(ID_VID_AAG, LisaEmFrame::OnVideoAAGray)
 EVT_MENU(ID_VID_HQ35X, LisaEmFrame::OnVideoHQ35X)
+EVT_MENU(ID_VID_FILL1024, LisaEmFrame::OnVideoFill1024)
 
 EVT_MENU(ID_VID_DY, LisaEmFrame::OnVideoDoubleY)
 EVT_MENU(ID_VID_SY, LisaEmFrame::OnVideoSingleY)
@@ -1495,6 +1500,17 @@ void LisaWin::SetVideoMode(int mode)
       o_effective_lisa_vid_size_x = _H(720);
       o_effective_lisa_vid_size_y = _H(364 * 2);
       RePainter = &LisaWin::RePaint_DoubleY;
+      break;
+
+    case vidmod_fill1024:
+      buildscreenymap_2Y();
+      skin.screen_origin_x = 0;
+      skin.screen_origin_y = 0;
+      effective_lisa_vid_size_x = _H(1024);
+      effective_lisa_vid_size_y = _H(364 * 2);
+      o_effective_lisa_vid_size_x = _H(1024);
+      o_effective_lisa_vid_size_y = _H(364 * 2);
+      RePainter = &LisaWin::RePaint_Fill1024;
       break;
 
     case vidmod_raw:
@@ -2463,6 +2479,18 @@ void LisaEmFrame::OnVideoHQ35X(wxCommandEvent& WXUNUSED(event))
       } // even still too small, go raw bits mode.
     }
     my_lisawin->SetVideoMode(vidmod_hq35x);
+}
+
+void LisaEmFrame::OnVideoFill1024(wxCommandEvent& WXUNUSED(event))
+{
+    if (skins_on)
+    {
+      if (yesnomessagebox("This mode does not work with the Lisa Skin.  Shut off the skin?",
+                          "Remove Skin?") == 0)
+        return;
+    }
+    turn_skins_off();
+    my_lisawin->SetVideoMode(vidmod_fill1024);
 }
 
 void LisaEmFrame::OnVideoAAGray(wxCommandEvent& WXUNUSED(event))
@@ -5949,6 +5977,116 @@ int LisaWin::RePaint_DoubleY(int startx, int starty, int endx, int endy)
     return 1;
 }
 
+int LisaWin::RePaint_Fill1024(int startx, int starty, int endx, int endy)
+{
+    // Fill mode for a 1024x768-class panel.
+    // Vertical: exact integer 2x line-doubling (364 -> 728), identical to RePaint_DoubleY (alias-free,
+    // since 2 is an exact integer ratio, no blending needed on this axis).
+    // Horizontal: 720 -> 1024 is not an integer ratio (64:45), so instead of nearest-neighbor (which
+    // repeats some source columns into 2 output pixels and others into 1, in an uneven pattern -- this
+    // caused visibly inconsistent vertical stroke widths in text), each output pixel exact fractional
+    // overlap with its 1 or 2 underlying source pixels is computed and gray-blended (box-filter
+    // coverage antialiasing). A source pixel edge position within an output cell is then encoded as a
+    // shade of gray rather than snapped to a hard boundary, giving consistent, alias-free stroke
+    // rendering. Always redraws the full frame (no dirty-rect optimization) for simplicity.
+    int x, y, srcy;
+    int width, height;
+    uint8 byteval;
+    uint32 d;
+    uint32 start_scaled, end_scaled, src0, src1, boundary_scaled, cov0, cov1;
+    uint32 level0, level1;
+    int bitpos0, bitpos1;
+
+    if (skins_on)
+    {
+      ALERT_LOG(0, "Skins should not be on!!!!");
+      turn_skins_off();
+    }
+
+    if (!my_lisabitmap)
+    {
+      delete my_lisabitmap;
+      delete my_memDC;
+      my_memDC = new class wxMemoryDC;
+      my_lisabitmap = new class wxBitmap(o_effective_lisa_vid_size_x, o_effective_lisa_vid_size_y, DEPTH);
+
+      my_memDC->SelectObjectAsSource(*my_lisabitmap);
+      my_memDC->SetBrush(FILLERBRUSH);
+      my_memDC->SetPen(FILLERPEN);
+      my_memDC->DrawRectangle(0, 0, effective_lisa_vid_size_x, effective_lisa_vid_size_y);
+    }
+
+    if (!my_lisabitmap)
+      return 0;
+
+    width = my_lisabitmap->GetWidth();
+    height = my_lisabitmap->GetHeight();
+
+    if (width < 1024 || height < 364 * 2)
+    {
+      ALERT_LOG(0, "my_lisabitmap too small: %d,%d vs o_effective_lisa_vid_size: %d,%d", width, height,
+                o_effective_lisa_vid_size_x, o_effective_lisa_vid_size_y);
+      delete my_lisabitmap;
+      my_lisabitmap = NULL;
+      return 0;
+    }
+
+    if (!display_image)
+      display_image = new wxImage(my_lisabitmap->ConvertToImage());
+
+    for (y = 0; y < 364 * 2; y++)
+    {
+      srcy = screen_to_mouse[y]; // 0..363, exact 2x vertical doubling (same mapping as DoubleY)
+
+      for (x = 0; x < 1024; x++)
+      {
+        // exact source-pixel-space boundaries of this output pixel, in units of 1/1024 source pixel
+        start_scaled = x * 720;
+        end_scaled = (x + 1) * 720;
+        src0 = start_scaled >> 10;       // start_scaled / 1024
+        src1 = (end_scaled - 1) >> 10;   // floor(end - epsilon) / 1024
+
+        bitpos0 = 7 - (src0 & 7);
+        byteval = lisaram[videolatchaddress + ((yoffset[srcy] + (src0 >> 3)) & 32767)];
+        level0 = bright[((byteval >> bitpos0) & 1) ? 7 : 0];
+
+        if (src1 == src0)
+        {
+          // output pixel lies entirely within one source pixel - no blending needed
+          d = level0;
+        }
+        else
+        {
+          // output pixel straddles the boundary between src0 and src1 (src1 == src0+1) - blend
+          bitpos1 = 7 - (src1 & 7);
+          byteval = lisaram[videolatchaddress + ((yoffset[srcy] + (src1 >> 3)) & 32767)];
+          level1 = bright[((byteval >> bitpos1) & 1) ? 7 : 0];
+
+          boundary_scaled = (src0 + 1) << 10;
+          cov0 = boundary_scaled - start_scaled; // portion of this output pixel covered by src0
+          cov1 = end_scaled - boundary_scaled;   // portion covered by src1 (cov0 + cov1 == 720 always)
+
+          d = (level0 * cov0 + level1 * cov1) / 720;
+        }
+
+        display_image->SetRGB(x, y, (uint8)d, (uint8)d, (uint8)(d + EXTRABLUE));
+      }
+    }
+
+    delete my_lisabitmap;
+    my_lisabitmap = new wxBitmap(*display_image);
+    my_memDC->SelectObjectAsSource(*my_lisabitmap);
+
+    e_dirty_x_min = 0;
+    e_dirty_x_max = 1024;
+    e_dirty_y_min = 0;
+    e_dirty_y_max = 364 * 2;
+
+    memcpy(dirtyvidram, &lisaram[videolatchaddress], 32768);
+    repaintall |= REPAINT_INVALID_WINDOW | REPAINT_VIDEO_TO_SKIN;
+
+    return 1;
+}
 
 int LisaWin::RePaint_2X3Y(int startx, int starty, int endx, int endy)
 {
@@ -6191,7 +6329,7 @@ int LisaWin::OnPaint_skinless(wxRect &rect, DCTYPE &dc)
     }
 
     ox = (ww_width - _H(effective_lisa_vid_size_x)) / 2;
-    oy = (ww_height - _H(effective_lisa_vid_size_x)) / 2;
+    oy = (ww_height - _H(effective_lisa_vid_size_y)) / 2;
 
     if (ox < 0 || (!skinless_center))
       ox = 0;
@@ -6954,6 +7092,15 @@ void LisaWin::OnMouseMove(wxMouseEvent &event)
         x -= (ox / 2);
         y -= oy;
         ;
+      }
+      else if (lisa_ui_video_mode == vidmod_fill1024)
+      {
+        // Fill1024 displayed bitmap is 1024 wide (vs. the Lisa native 720) - rescale the
+        // on-screen x coordinate back down to native Lisa coordinate space, the inverse of the
+        // 720->1024 box-filter resample RePaint_Fill1024 does when drawing.
+        x -= skin.screen_origin_x;
+        y -= skin.screen_origin_y;
+        x = x * 720 / 1024;
       }
       else
       {
@@ -7891,6 +8038,7 @@ void update_menu_checkmarks(void)
       DisplayMenu->Check(ID_VID_AA, (lisa_ui_video_mode == vidmod_aa));
       DisplayMenu->Check(ID_VID_AAG, (lisa_ui_video_mode == vidmod_aag));
       DisplayMenu->Check(ID_VID_HQ35X, (lisa_ui_video_mode == vidmod_hq35x));
+      DisplayMenu->Check(ID_VID_FILL1024, (lisa_ui_video_mode == vidmod_fill1024));
 
       DisplayMenu->Check(ID_VID_DY, (lisa_ui_video_mode == vidmod_2y));
       DisplayMenu->Check(ID_VID_SY, (lisa_ui_video_mode == vidmod_raw));
@@ -8900,6 +9048,7 @@ LisaEmFrame::LisaEmFrame(const wxString& title)
     DisplayScaleSub->Append(ID_VID_SCALE_ZOOMOUT, wxT("Zoom Out \tCtrl--"), wxT("Zoom Out"));
 
     DisplayMenu->AppendRadioItem(ID_VID_HQ35X, wxT("HQX Upscaler"), wxT("Aspect Corrected High Quality Magnification Filer hq3.5x"));
+    DisplayMenu->AppendRadioItem(ID_VID_FILL1024, wxT("Fill 1024x768"), wxT("Nearest-neighbor fill for a 1024x768 panel, no blur"));
     DisplayMenu->AppendRadioItem(ID_VID_AA, wxT("AntiAliased"), wxT("Aspect Corrected with Anti Aliasing"));
     DisplayMenu->AppendRadioItem(ID_VID_AAG, wxT("AntiAliased with Gray Replacement"), wxT("Aspect Corrected with Anti Aliasing and Gray Replacing"));
     DisplayMenu->AppendRadioItem(ID_VID_SY, wxT("Raw"), wxT("Uncorrected Aspect Ratio"));

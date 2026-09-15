@@ -354,6 +354,7 @@ public:
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 static int set_window_size_already = 0;
 
+static int on_start_mousetopmenu = 0;
 static int on_start_poweron = 0,
            on_start_fullscreen = 0,
            on_start_skin = 0,
@@ -362,6 +363,8 @@ static int on_start_poweron = 0,
            on_start_quit_on_poweroff = 0,
            box_x = -1, box_y = -1, box_xh = -1, box_yh = -1; // used for screengrab
 static double on_start_zoom = 0.0;
+int mouse_top_shows_menu_fullscreen = 1; // preference: does moving the mouse to the top edge
+                                          // reveal the menu bar while in fullscreen?
 
 wxString on_start_lisaconfig = "",
          on_start_floppy = "";
@@ -378,6 +381,7 @@ static const wxCmdLineEntryDesc cmdLineDesc[] =
         {wxCMD_LINE_OPTION, "f", "floppy", "boot from which floppy image ROMless only", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL},
         {wxCMD_LINE_SWITCH, "d", "drive", "boot from motherboard ProFile/Widget ROMless only", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL},
         {wxCMD_LINE_SWITCH, "F", "fullscreen", "fullscreen mode (-F- to turn off)", wxCMD_LINE_VAL_NONE, wxCMD_LINE_SWITCH_NEGATABLE | wxCMD_LINE_PARAM_OPTIONAL},
+        {wxCMD_LINE_SWITCH, "M", "no-topmenu", "disable mouse-to-top revealing the menu bar in fullscreen (-M- to force it on)", wxCMD_LINE_VAL_NONE, wxCMD_LINE_SWITCH_NEGATABLE | wxCMD_LINE_PARAM_OPTIONAL},
         {wxCMD_LINE_OPTION, "z", "zoom", "set zoom level (0.50, 0.75, 1.0, 1.25,... 3.0)",
 
          wxCMD_LINE_VAL_DOUBLE,
@@ -664,6 +668,7 @@ enum
 
   ID_VID_SKINS,
   ID_VID_SKINLESSCENTER,
+  ID_VID_MOUSETOPMENU,
   ID_VID_SKINSELECT,
 
   ID_VID_SCALED_SUB,
@@ -840,6 +845,7 @@ public:
   void OnSkins(wxCommandEvent &event);
   void OnSkinSelect(wxCommandEvent &event);
   void OnSkinlessCenter(wxCommandEvent &event);
+  void OnMouseTopMenu(wxCommandEvent &event);
 
   void OnRefresh60(wxCommandEvent &event);
   void OnRefresh30(wxCommandEvent &event);
@@ -1030,6 +1036,7 @@ EVT_MENU(ID_VID_2X3Y, LisaEmFrame::OnVideo2X3Y)
 
 EVT_MENU(ID_VID_SKINS, LisaEmFrame::OnSkins)
 EVT_MENU(ID_VID_SKINLESSCENTER, LisaEmFrame::OnSkinlessCenter)
+EVT_MENU(ID_VID_MOUSETOPMENU, LisaEmFrame::OnMouseTopMenu)
 
 EVT_MENU(ID_VID_SKINSELECT, LisaEmFrame::OnSkinSelect)
 
@@ -2610,6 +2617,13 @@ void LisaEmFrame::OnSkinSelect(wxCommandEvent& WXUNUSED(event))
 }
 
 
+void LisaEmFrame::OnMouseTopMenu(wxCommandEvent& WXUNUSED(event))
+{
+    mouse_top_shows_menu_fullscreen = !mouse_top_shows_menu_fullscreen;
+    update_menu_checkmarks();
+    save_global_prefs();
+}
+
 void LisaEmFrame::OnSkinlessCenter(wxCommandEvent& WXUNUSED(event))
 {
     skinless_center = !skinless_center;
@@ -3173,6 +3187,7 @@ void save_global_prefs(void)
     myConfig->Write(_T("/displayskins"), skins_on_next_run);
     myConfig->Write(_T("/displaymode"), (long)lisa_ui_video_mode);
     myConfig->Write(_T("/centerskinless"), (long)skinless_center);
+    myConfig->Write(_T("/mousetopmenufullscreen"), (long)mouse_top_shows_menu_fullscreen);
 
     myConfig->Write(_T("/asciikeyboard"), (long)asciikeyboard);
     myConfig->Write(_T("/lisaconfigfile"), myconfigfile);
@@ -3300,6 +3315,11 @@ bool LisaEmApp::OnInit()
     skins_on_next_run = skins_on;
 
     skinless_center = (int)myConfig->Read(_T("/centerskinless"), (long)1);
+    mouse_top_shows_menu_fullscreen = (int)myConfig->Read(_T("/mousetopmenufullscreen"), (long)1);
+    if (on_start_mousetopmenu == wxCMD_SWITCH_ON)
+      mouse_top_shows_menu_fullscreen = 0; // -M: disable regardless of the saved preference
+    else if (on_start_mousetopmenu == wxCMD_SWITCH_OFF)
+      mouse_top_shows_menu_fullscreen = 1; // -M-: force it back on regardless of the saved preference
     if (on_start_center == wxCMD_SWITCH_ON)
     {
       skinless_center = 1;
@@ -3490,6 +3510,9 @@ bool LisaEmApp::OnInit()
     {
       wxCommandEvent foo;
       on_start_fullscreen = 0;
+      if (FullScreenCheckMenuItem)
+        FullScreenCheckMenuItem->Check(true); // OnFullScreen reads this checkbox as the target state;
+                                               // a real menu click auto-toggles it first, this synthetic call does not.
       my_lisaframe->OnFullScreen(foo);
       ALERT_LOG(0, "on_start_fullscreen or last state was fullscreen");
     }
@@ -3555,6 +3578,7 @@ bool LisaEmApp::OnCmdLineParsed(wxCmdLineParser& parser)
     on_start_poweron = parser.Found(wxT("p"));
     on_start_harddisk = parser.Found(wxT("d"));
     on_start_fullscreen = parser.FoundSwitch(wxT("F")); // negateable
+    on_start_mousetopmenu = parser.FoundSwitch(wxT("M")); // negateable
     on_start_skin = parser.FoundSwitch(wxT("s"));       // negateable
     on_start_quit_on_poweroff = parser.Found(wxT("q"));
 
@@ -6860,30 +6884,33 @@ void LisaWin::OnMouseMove(wxMouseEvent &event)
       on_startup_actions_done = 1;
     }
 
-#if (!defined(__WXOSX__)) && (!defined(SHOW_MENU_IN_FULLSCREEN))
-    if (!FullScreenCheckMenuItem)
-      return;
-    if (my_lisaframe->IsFullScreen() || FullScreenCheckMenuItem->IsChecked())
+#if !defined(__WXOSX__)
+    if (mouse_top_shows_menu_fullscreen)
     {
-      int menuline = _H(16);
-      if (pos.y < menuline && last_mouse_pos_y >= menuline)
-      { // this is retarded. ShowFullScreen works, but only once, need to turn it off if you want to enable menus, and that causes the window to flash.  :(
-        my_lisaframe->ShowFullScreen(false, 0);
-        my_lisaframe->Maximize(true);
-        // my_lisaframe->ShowFullScreen(true, wxFULLSCREEN_NOBORDER);
-        //  2019.09.04 even worse, now I have to get out of full screen mode entirely to display the menu. grrrr. issue with lightdm/enlightenment?
-        // my_lisaframe->ShowFullScreen(true, wxFULLSCREEN_NOBORDER | wxFULLSCREEN_NOCAPTION    );
-      }
-      else if (pos.y > menuline && last_mouse_pos_y <= menuline)
+      if (!FullScreenCheckMenuItem)
+        return;
+      if (my_lisaframe->IsFullScreen() || FullScreenCheckMenuItem->IsChecked())
       {
-        my_lisaframe->ShowFullScreen(false, wxFULLSCREEN_ALL);
-        my_lisaframe->ShowFullScreen(true, wxFULLSCREEN_ALL);
-      }
+        int menuline = _H(16);
+        if (pos.y < menuline && last_mouse_pos_y >= menuline)
+        { // this is retarded. ShowFullScreen works, but only once, need to turn it off if you want to enable menus, and that causes the window to flash.  :(
+          my_lisaframe->ShowFullScreen(false, 0);
+          my_lisaframe->Maximize(true);
+          // my_lisaframe->ShowFullScreen(true, wxFULLSCREEN_NOBORDER);
+          //  2019.09.04 even worse, now I have to get out of full screen mode entirely to display the menu. grrrr. issue with lightdm/enlightenment?
+          // my_lisaframe->ShowFullScreen(true, wxFULLSCREEN_NOBORDER | wxFULLSCREEN_NOCAPTION    );
+        }
+        else if (pos.y > menuline && last_mouse_pos_y <= menuline)
+        {
+          my_lisaframe->ShowFullScreen(false, wxFULLSCREEN_ALL);
+          my_lisaframe->ShowFullScreen(true, wxFULLSCREEN_ALL);
+        }
 
-      if (FullScreenCheckMenuItem->IsChecked() && !my_lisaframe->IsFullScreen() && pos.y > menuline)
-      {
-        my_lisaframe->ShowFullScreen(false, wxFULLSCREEN_ALL);
-        my_lisaframe->ShowFullScreen(true, wxFULLSCREEN_ALL);
+        if (FullScreenCheckMenuItem->IsChecked() && !my_lisaframe->IsFullScreen() && pos.y > menuline)
+        {
+          my_lisaframe->ShowFullScreen(false, wxFULLSCREEN_ALL);
+          my_lisaframe->ShowFullScreen(true, wxFULLSCREEN_ALL);
+        }
       }
     }
 #endif
@@ -7899,6 +7926,7 @@ void update_menu_checkmarks(void)
 
       DisplayMenu->Check(ID_VID_SKINS, !!skins_on);
       DisplayMenu->Check(ID_VID_SKINLESSCENTER, !!skinless_center);
+      DisplayMenu->Check(ID_VID_MOUSETOPMENU, !!mouse_top_shows_menu_fullscreen);
 
       if (!!my_lisaframe)
       {
@@ -8909,6 +8937,7 @@ LisaEmFrame::LisaEmFrame(const wxString& title)
     DisplayMenu->AppendSeparator();
     DisplayMenu->AppendCheckItem(ID_VID_SKINS, wxT("Skin"), wxT("Turn skins on/off"));
     DisplayMenu->AppendCheckItem(ID_VID_SKINLESSCENTER, wxT("Center when skinless"), wxT("Center the display when skins are turned off"));
+    DisplayMenu->AppendCheckItem(ID_VID_MOUSETOPMENU, wxT("Mouse-to-top reveals menu in fullscreen"), wxT("Moving the mouse to the top edge exits fullscreen to show the menu bar; uncheck if this is triggered unintentionally on a small display"));
     DisplayMenu->Append(ID_VID_SKINSELECT, wxT("Change Skin"), wxT("Skin Select"));
     DisplayMenu->AppendSeparator();
 

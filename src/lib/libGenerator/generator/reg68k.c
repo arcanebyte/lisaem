@@ -816,6 +816,198 @@ void dumpallmmu(void)
 
 #endif
 
+/* LISAEM_CPU_TRACE=<file>: log instructions whose PC is in
+ * LISAEM_CPU_TRACE_RANGE (hex "lo-hi", default 0-ffffff), at most
+ * LISAEM_CPU_TRACE_MAX lines (default 2000000). Each line has the PC, the
+ * cached opcode and operands of the pre-decoded instruction (IPC), the
+ * words in memory at the PC, SR and registers. Before logging, the
+ * instruction is decoded again from memory; if the cached operands differ
+ * the line is marked STALE (the IPC cache only checks the opcode word).
+ * With LISAEM_CPU_TRACE_MODE=stale only STALE lines are written.
+ */
+static int cpu_trace_state = -1;
+static FILE *cpu_trace_file = NULL;
+static uint32 cpu_trace_lo = 0, cpu_trace_hi = 0xffffff;
+static long cpu_trace_left = 2000000;
+static int cpu_trace_stale_only = 0;
+
+static void cpu_trace_init(void)
+{
+  const char *e = getenv("LISAEM_CPU_TRACE");
+  cpu_trace_state = 0;
+  if (e == NULL || *e == '\0')
+    return;
+  cpu_trace_file = fopen(e, "w");
+  if (!cpu_trace_file)
+    return;
+  const char *r = getenv("LISAEM_CPU_TRACE_RANGE");
+  if (r)
+  {
+    unsigned long lo, hi;
+    if (sscanf(r, "%lx-%lx", &lo, &hi) == 2)
+    {
+      cpu_trace_lo = (uint32)lo;
+      cpu_trace_hi = (uint32)hi;
+    }
+  }
+  const char *m = getenv("LISAEM_CPU_TRACE_MAX");
+  if (m)
+    cpu_trace_left = atol(m);
+  const char *md = getenv("LISAEM_CPU_TRACE_MODE");
+  cpu_trace_stale_only = (md != NULL && strcmp(md, "stale") == 0);
+  fprintf(cpu_trace_file, "# LisaEm CPU trace, PC range %06x-%06x\n", cpu_trace_lo, cpu_trace_hi);
+  fflush(cpu_trace_file);
+  cpu_trace_state = 1;
+}
+
+/* Log the MMU state whenever it changes, and flag inconsistencies: the
+ * register table (mmu) or page table (mmu_trans) not being the one for
+ * the current context, or context not matching start/segment1/segment2.
+ */
+static void cpu_trace_mmu_state(uint32 pc)
+{
+  static int last_start = -1, last_context = -1, last_s1 = -1, last_s2 = -1;
+  static void *last_mmu = NULL, *last_trans = NULL;
+  int bad = (mmu != mmu_all[context]) || (mmu_trans != mmu_trans_all[context]) ||
+            (context != CXSASEL);
+
+  if (start != last_start || context != last_context || segment1 != last_s1 || segment2 != last_s2 ||
+      (void *)mmu != last_mmu || (void *)mmu_trans != last_trans || bad)
+  {
+    fprintf(cpu_trace_file, "%06x MMU start=%d context=%d s1=%d s2=%d cxsasel=%d mmu=cx%d trans=cx%d%s\n",
+            pc & 0xffffff, start, context, segment1, segment2, (int)CXSASEL,
+            (int)(((uint8 *)mmu - (uint8 *)mmu_all[0]) / (long)((uint8 *)mmu_all[1] - (uint8 *)mmu_all[0])),
+            (int)(((uint8 *)mmu_trans - (uint8 *)mmu_trans_all[0]) / (long)((uint8 *)mmu_trans_all[1] - (uint8 *)mmu_trans_all[0])),
+            bad ? " INCONSISTENT" : "");
+    fflush(cpu_trace_file);
+    last_start = start;
+    last_context = context;
+    last_s1 = segment1;
+    last_s2 = segment2;
+    last_mmu = (void *)mmu;
+    last_trans = (void *)mmu_trans;
+  }
+}
+
+/* LISAEM_CPU_TRACE_WATCH=<logical address, hex>: after every instruction,
+ * compare the byte in physical RAM for that address in context 1 with the
+ * byte read through the current page translation, and log any change of
+ * either, and of the page's translation entry.
+ */
+static long cpu_trace_watch = -1;
+
+static void cpu_trace_watch_check(uint32 pc)
+{
+  static int last_phys = -1, last_read = -1;
+  static int32 last_address = 0x7fffffff;
+  static int last_rfn = -1;
+  uint32 a = (uint32)cpu_trace_watch;
+  uint32 phys = ((mmu_all[1][(a >> 17) & 0x7f].sor << 9) + (a & 0x1ffff)) & 0x1fffff;
+  int pv = lisaram[phys];
+  mmu_trans_t *mt = &mmu_trans_all[1][(a & 0xfffe00) >> 9];
+  int rv = -1;
+  if (mt->readfn == ram)
+    rv = lisaram[((uint32)((int32)a + mt->address)) & 0x1fffff];
+
+  if (pv != last_phys || rv != last_read || mt->address != last_address || (int)mt->readfn != last_rfn)
+  {
+    fprintf(cpu_trace_file, "%06x WATCH %06x phys=%06x byte=%02x read=%02x trans.address=%08x readfn=%d\n",
+            pc & 0xffffff, a, phys, pv, rv & 0xff, mt->address, (int)mt->readfn);
+    fflush(cpu_trace_file);
+    last_phys = pv;
+    last_read = rv;
+    last_address = mt->address;
+    last_rfn = (int)mt->readfn;
+  }
+}
+
+static void cpu_trace(t_ipc *ipc, uint32 pc)
+{
+  if (cpu_trace_state < 0)
+  {
+    cpu_trace_init();
+    const char *w = getenv("LISAEM_CPU_TRACE_WATCH");
+    if (w)
+      cpu_trace_watch = strtol(w, NULL, 16);
+  }
+  if (cpu_trace_state != 1)
+    return;
+  cpu_trace_mmu_state(pc);
+  if (cpu_trace_watch >= 0)
+    cpu_trace_watch_check(pc);
+
+  /* LISAEM_CPU_TRACE_DUMP="<pc>,<lo>-<hi>" (hex): the first time the PC
+   * reaches <pc>, write logical <lo>-<hi> as seen through context 1 to
+   * <trace file>.ram.
+   */
+  {
+    static int dump_state = -1;
+    static unsigned long dpc, dlo, dhi;
+    if (dump_state < 0)
+    {
+      const char *d = getenv("LISAEM_CPU_TRACE_DUMP");
+      dump_state = (d && sscanf(d, "%lx,%lx-%lx", &dpc, &dlo, &dhi) == 3) ? 1 : 0;
+    }
+    if (dump_state == 1 && (pc & 0xffffff) == dpc)
+    {
+      char name[1100];
+      snprintf(name, sizeof(name), "%s.ram", getenv("LISAEM_CPU_TRACE"));
+      FILE *f = fopen(name, "wb");
+      for (unsigned long x = dlo; f && x < dhi; x++)
+      {
+        uint32 phys = ((mmu_all[1][(x >> 17) & 0x7f].sor << 9) + (x & 0x1ffff)) & 0x1fffff;
+        fputc(lisaram[phys], f);
+      }
+      if (f)
+        fclose(f);
+      fprintf(cpu_trace_file, "%06x DUMP %06lx-%06lx to %s\n", pc & 0xffffff, dlo, dhi, name);
+      dump_state = 2;
+    }
+  }
+  pc &= 0xffffff;
+  if (pc < cpu_trace_lo || pc > cpu_trace_hi)
+    return;
+  if (cpu_trace_left <= 0)
+  {
+    if (cpu_trace_left == 0)
+      fprintf(cpu_trace_file, "# trace line limit reached\n");
+    cpu_trace_left = -1;
+    fflush(cpu_trace_file);
+    return;
+  }
+
+  int stale = 0;
+  uint16 op = fetchword(pc);
+  t_iib *iib = cpu68k_iibtable[op];
+  t_ipc fresh;
+  if (iib)
+  {
+    int saved_abort = abort_opcode;
+    memset(&fresh, 0, sizeof(fresh));
+    cpu68k_ipc(pc, iib, &fresh);
+    abort_opcode = saved_abort;
+    stale = (fresh.opcode != ipc->opcode || fresh.src != ipc->src || fresh.dst != ipc->dst ||
+             fresh.sreg != ipc->sreg || fresh.dreg != ipc->dreg || fresh.wordlen != ipc->wordlen);
+  }
+  if (cpu_trace_stale_only && !stale)
+    return;
+  cpu_trace_left--;
+
+  fprintf(cpu_trace_file, "%06x %04x src=%08x dst=%08x len=%d mem=", pc, ipc->opcode, ipc->src, ipc->dst, ipc->wordlen);
+  for (int i = 0; i < 5; i++)
+    fprintf(cpu_trace_file, "%04x", fetchword(pc + 2 * i));
+  fprintf(cpu_trace_file, " sr=%04x d=%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x a=%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x",
+          reg68k_sr.sr_int, reg68k_regs[0], reg68k_regs[1], reg68k_regs[2], reg68k_regs[3], reg68k_regs[4], reg68k_regs[5],
+          reg68k_regs[6], reg68k_regs[7], reg68k_regs[8], reg68k_regs[9], reg68k_regs[10], reg68k_regs[11], reg68k_regs[12],
+          reg68k_regs[13], reg68k_regs[14], reg68k_regs[15]);
+  if (stale)
+    fprintf(cpu_trace_file, " STALE fresh: src=%08x dst=%08x sreg=%04x dreg=%04x len=%d cached sreg=%04x dreg=%04x",
+            fresh.src, fresh.dst, fresh.sreg, fresh.dreg, fresh.wordlen, ipc->sreg, ipc->dreg);
+  fputc('\n', cpu_trace_file);
+  if (stale || (cpu_trace_left & 0x3ff) == 0)
+    fflush(cpu_trace_file);
+}
+
 unsigned int reg68k_external_step(void)
 {
   static t_ipc ipc;
@@ -2381,6 +2573,8 @@ int32 reg68k_external_execute(int32 clocks)
           static int tested;
           uint32 opc = pc24;
 #endif
+          if (cpu_trace_state != 0)
+            cpu_trace(ipc, pc24);
           ipc->function(ipc);
 #ifdef CHECK_HIGH_BYTE_PRESERVE
           if ((opc & 0xff000000) != 0 && (reg68k_pc & 0xff000000) == 0)

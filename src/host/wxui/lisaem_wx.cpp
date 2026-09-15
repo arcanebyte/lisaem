@@ -1214,6 +1214,7 @@ void setup_hidpi(void)
 
 char *paste_to_keyboard = NULL;
 static int idx_paste_to_kb = 0;
+static int paste_from_keyboard_file = 0; // LISAEM_KEYBOARD_FILE: ^A + byte is a raw COPS code
 
 // ::TODO:: cleanup, remove
 // external interface to TerminalWx console - trampoline functions. Keypresses sent to console will mirror to my_lisawin
@@ -1847,6 +1848,8 @@ static void screen_dump_if_due(void)
 // Lisa keyboard, through the same path as Edit/Paste (one ASCII character
 // at a time, translated by keydecodetable). A script types by appending to
 // the file. Bytes that arrive while a paste is still going wait for it.
+// A ^A (0x01) byte followed by any byte B sends B to the COPS as a raw key
+// code (bit 7 set: key down, clear: key up), so a script can hold a key.
 static void keyboard_file_if_due(void)
 {
     static int enabled = -1;
@@ -1887,6 +1890,7 @@ static void keyboard_file_if_due(void)
       ALERT_LOG(0, "LISAEM_KEYBOARD_FILE: typing %ld bytes", n);
       paste_to_keyboard = buf;
       idx_paste_to_kb = 0;
+      paste_from_keyboard_file = 1;
     }
     fclose(f);
 }
@@ -2273,13 +2277,21 @@ void LisaEmFrame::OnEmulationTimer(wxTimerEvent& event)
         if (paste_to_keyboard[idx_paste_to_kb])
         {
           ALERT_LOG(0, "Pasting to keyboard: %02x", paste_to_keyboard[idx_paste_to_kb]);
-          keystroke_cops(paste_to_keyboard[idx_paste_to_kb++]);
+          if (paste_from_keyboard_file && paste_to_keyboard[idx_paste_to_kb] == 0x01 &&
+              paste_to_keyboard[idx_paste_to_kb + 1])
+          {
+            send_cops_keycode((uint8)paste_to_keyboard[idx_paste_to_kb + 1]);
+            idx_paste_to_kb += 2;
+          }
+          else
+            keystroke_cops(paste_to_keyboard[idx_paste_to_kb++]);
         }
         else
         {
           idx_paste_to_kb = -1;
           free(paste_to_keyboard);
           paste_to_keyboard = NULL;
+          paste_from_keyboard_file = 0;
           ALERT_LOG(0, "//////// End of paste to keyboard ////////");
         }
       }

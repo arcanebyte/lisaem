@@ -3303,8 +3303,15 @@ void lisa_ww_Oxe800_videlatch(uint32 addr, uint16 data)
 
     DEBUG_LOG(100, "Warning word write to video latch:%04x->@%08x", data, addr);
 
-    lisa_wb_Oxe800_videlatch(addr, (uint8)((data >> 8) & 0xff));
-    lisa_wb_Oxe800_videlatch(addr + 1, (uint8)((data) & 0xff));
+    // The latch takes data lines D0-D7, which carry the low byte of a word
+    // write.
+    if ((addr & 0x000000fff) == 0x00000800)
+        lisa_wb_Oxe800_videlatch(addr, (uint8)((data) & 0xff));
+    else
+    {
+        lisa_wb_Oxe800_videlatch(addr, (uint8)((data >> 8) & 0xff));
+        lisa_wb_Oxe800_videlatch(addr + 1, (uint8)((data) & 0xff));
+    }
 }
 
 void lisa_wl_Oxe800_videlatch(uint32 addr, uint32 data)

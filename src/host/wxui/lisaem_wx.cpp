@@ -1924,6 +1924,37 @@ static void mouse_move_if_due(void)
     seek_mouse_event();
 }
 
+// LISAEM_FLOPPY_AT=<seconds>,<image>: once, that many seconds of host time
+// after start, insert the disk image into the floppy drive, as the menu's
+// insert command does, without restarting from it (unlike -f).
+static void floppy_insert_if_due(void)
+{
+    static int enabled = -1;
+    static double seconds;
+    static char path[1024];
+    static wxLongLong start = 0;
+
+    if (enabled < 0)
+    {
+      const char *e = getenv("LISAEM_FLOPPY_AT");
+      const char *comma = e ? strchr(e, ',') : NULL;
+      enabled = (comma != NULL && comma[1] != '\0');
+      if (enabled)
+      {
+        seconds = atof(e);
+        snprintf(path, sizeof(path), "%s", comma + 1);
+      }
+      start = wxGetLocalTimeMillis();
+    }
+    if (enabled != 1)
+      return;
+    if ((wxGetLocalTimeMillis() - start).ToDouble() < seconds * 1000.0)
+      return;
+    enabled = 2;
+    int r = floppy_insert(path, 0);
+    fprintf(stderr, "LISAEM_FLOPPY_AT: inserted %s, result %d\n", path, r);
+}
+
 void LisaEmFrame::Update_Status(long elapsed,long idleentry)
 {
     static int counter;
@@ -2033,6 +2064,7 @@ void LisaEmFrame::Update_Status(long elapsed,long idleentry)
     screen_dump_if_due();
     keyboard_file_if_due();
     mouse_move_if_due();
+    floppy_insert_if_due();
 
 }
 

@@ -1891,6 +1891,35 @@ static void keyboard_file_if_due(void)
     fclose(f);
 }
 
+// LISAEM_MOUSE_MOVE_AT=<seconds>: once, that many seconds of host time
+// after the first check, do what moving the pointer to the middle of the
+// Lisa screen does (add_mouse_event, then seek_mouse_event), so a script
+// can test how a guest copes with mouse reports.
+static void mouse_move_if_due(void)
+{
+    static int enabled = -1;
+    static double seconds;
+    static wxLongLong start = 0;
+
+    if (enabled < 0)
+    {
+      const char *e = getenv("LISAEM_MOUSE_MOVE_AT");
+      enabled = (e != NULL && *e != '\0');
+      if (enabled)
+        seconds = atof(e);
+      start = wxGetLocalTimeMillis();
+    }
+    if (enabled != 1)
+      return;
+    if ((wxGetLocalTimeMillis() - start).ToDouble() < seconds * 1000.0)
+      return;
+    enabled = 2;
+    ALERT_LOG(0, "LISAEM_MOUSE_MOVE_AT: moving the mouse");
+    fprintf(stderr, "LISAEM_MOUSE_MOVE_AT: moving the mouse\n");
+    add_mouse_event(360, 182, 0);
+    seek_mouse_event();
+}
+
 void LisaEmFrame::Update_Status(long elapsed,long idleentry)
 {
     static int counter;
@@ -1999,6 +2028,7 @@ void LisaEmFrame::Update_Status(long elapsed,long idleentry)
 #endif
     screen_dump_if_due();
     keyboard_file_if_due();
+    mouse_move_if_due();
 
 }
 

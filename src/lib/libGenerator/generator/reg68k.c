@@ -965,6 +965,27 @@ static void cpu_trace(t_ipc *ipc, uint32 pc)
     }
   }
   pc &= 0xffffff;
+
+  /* LISAEM_CPU_TRACE_START=<pc> (hex): log nothing until the PC first
+   * reaches <pc>.
+   */
+  {
+    static int start_state = -1;
+    static unsigned long spc;
+    if (start_state < 0)
+    {
+      const char *st = getenv("LISAEM_CPU_TRACE_START");
+      start_state = (st && sscanf(st, "%lx", &spc) == 1) ? 1 : 0;
+    }
+    if (start_state == 1)
+    {
+      if (pc != spc)
+        return;
+      fprintf(cpu_trace_file, "%06x START\n", pc);
+      start_state = 2;
+    }
+  }
+
   if (pc < cpu_trace_lo || pc > cpu_trace_hi)
     return;
   if (cpu_trace_left <= 0)

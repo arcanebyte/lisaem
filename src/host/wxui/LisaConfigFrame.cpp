@@ -37,6 +37,7 @@
 
 #include "LisaConfig.h"
 #include "LisaConfigFrame.h"
+#include "DialogLog.h"
 
 #include "machine.h"
 

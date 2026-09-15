@@ -210,6 +210,7 @@ long emulation_time = 25;
 
 #include <LisaConfig.h>
 #include <LisaConfigFrame.h>
+#include <DialogLog.h>
 #include <LisaSkin.h>
 
 // sounds, images, etc.
@@ -1800,6 +1801,47 @@ extern "C"  void dumpallscreenshot(void)
 
 #endif
 
+// LISAEM_SCREEN_DUMP=<file.png>: about once a second of host time, save the
+// Lisa's display (720x364, one bit per pixel, read from video RAM) to that
+// file, so a script can see the screen without a window capture. The file
+// is written under a temporary name and renamed, so readers never see a
+// partial file.
+static void screen_dump_if_due(void)
+{
+    static int enabled = -1;
+    static char path[1024];
+    static wxLongLong last = 0;
+
+    if (enabled < 0)
+    {
+      const char *e = getenv("LISAEM_SCREEN_DUMP");
+      enabled = (e != NULL && *e != '\0');
+      if (enabled)
+        snprintf(path, sizeof(path), "%s", e);
+    }
+    if (!enabled || !lisaram)
+      return;
+
+    wxLongLong now = wxGetLocalTimeMillis();
+    if (now - last < 1000)
+      return;
+    last = now;
+
+    const int w = 720, h = 364, bytes_per_row = 90;
+    wxImage image(w, h, false);
+    for (int y = 0; y < h; y++)
+      for (int x = 0; x < w; x++)
+      {
+        uint8 b = lisaram[videolatchaddress + y * bytes_per_row + (x >> 3)];
+        uint8 v = (b & (0x80 >> (x & 7))) ? 0 : 255;  // a set bit is black
+        image.SetRGB(x, y, v, v, v);
+      }
+
+    wxString tmp = wxString(path) + _T(".tmp");
+    if (image.SaveFile(tmp, wxBITMAP_TYPE_PNG))
+      wxRenameFile(tmp, wxString(path), true);
+}
+
 void LisaEmFrame::Update_Status(long elapsed,long idleentry)
 {
     static int counter;
@@ -1906,6 +1948,7 @@ void LisaEmFrame::Update_Status(long elapsed,long idleentry)
       last_lisa_clock_secs = lisa_clock.secs_l;
     }
 #endif
+    screen_dump_if_due();
     
 }
 
@@ -7866,6 +7909,12 @@ extern "C" int yesnomessagebox(char *s, char *t)  // messagebox string of text, 
     text << s;
     wxString title = "";
     title << t;
+    if (LisaEmNoDialogs())
+    {
+        LisaEmLogDialog(title, text, false);
+        return (LisaEmDialogDefault(wxYES_NO | wxNO_DEFAULT) == wxID_YES);
+    }
+    LisaEmLogDialog(title, text, true);
     wxMessageDialog w(my_lisawin, text, title, wxICON_QUESTION | wxYES_NO | wxNO_DEFAULT, wxDefaultPosition);
     return (w.ShowModal() == wxID_YES);
 }

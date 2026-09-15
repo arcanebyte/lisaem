@@ -822,6 +822,11 @@ static void do_floppy_read(DC42ImageType *F)
     // Copy datasize=512 bytes from the dc42 image into floppy_ram[], starting at location DISKDATASEC=512
     memcpy(&floppy_ram[DISKDATASEC], ptr, F->datasize);
 
+    // The format byte from the sector's address header: 0x22 for a
+    // double-sided (800K) disk, 0x02 for single-sided. MacWorks Plus II's
+    // Sony driver checks it at $FCC013 to choose 800K or 400K geometry.
+    floppy_ram[INTERLEAVE] = (F->numblocks == 1600) ? 0x22 : 0x02;
+
     if (sectornumber == 0)
     {
         bootblockchecksum = 0;

@@ -1842,6 +1842,55 @@ static void screen_dump_if_due(void)
       wxRenameFile(tmp, wxString(path), true);
 }
 
+// LISAEM_KEYBOARD_FILE=<file>: about five times a second of host time, look
+// for bytes appended to that file since the last look and type them on the
+// Lisa keyboard, through the same path as Edit/Paste (one ASCII character
+// at a time, translated by keydecodetable). A script types by appending to
+// the file. Bytes that arrive while a paste is still going wait for it.
+static void keyboard_file_if_due(void)
+{
+    static int enabled = -1;
+    static char path[1024];
+    static long offset = 0;
+    static wxLongLong last = 0;
+
+    if (enabled < 0)
+    {
+      const char *e = getenv("LISAEM_KEYBOARD_FILE");
+      enabled = (e != NULL && *e != '\0');
+      if (enabled)
+        snprintf(path, sizeof(path), "%s", e);
+    }
+    if (!enabled || paste_to_keyboard)
+      return;
+
+    wxLongLong now = wxGetLocalTimeMillis();
+    if (now - last < 200)
+      return;
+    last = now;
+
+    FILE *f = fopen(path, "rb");
+    if (!f)
+      return;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    if (size < offset)       // file was truncated: start again from the top
+      offset = 0;
+    if (size > offset)
+    {
+      long n = size - offset;
+      char *buf = (char *)calloc(1, n + 1);
+      fseek(f, offset, SEEK_SET);
+      n = fread(buf, 1, n, f);
+      buf[n] = 0;
+      offset += n;
+      ALERT_LOG(0, "LISAEM_KEYBOARD_FILE: typing %ld bytes", n);
+      paste_to_keyboard = buf;
+      idx_paste_to_kb = 0;
+    }
+    fclose(f);
+}
+
 void LisaEmFrame::Update_Status(long elapsed,long idleentry)
 {
     static int counter;
@@ -1949,7 +1998,8 @@ void LisaEmFrame::Update_Status(long elapsed,long idleentry)
     }
 #endif
     screen_dump_if_due();
-    
+    keyboard_file_if_due();
+
 }
 
 #if wxUSE_DRAG_AND_DROP

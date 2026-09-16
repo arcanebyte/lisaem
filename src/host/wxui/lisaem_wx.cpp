@@ -429,6 +429,8 @@ enum
   vidmod_3y = 3,    // RePaint_2X3Y
   vidmod_aag = 4,   // RePaint_AAGray
   vidmod_hq35x = 5, // RePaint_HQ35X
+  vidmod_fill1024 = 6, // RePaint_Fill1024
+  vidmod_fitwindow = 7, // RePaint_FitWindow
   vidmod_3a = 0x3a  // RePaint_3A;  // consider adding 2x 3x or 4x HQX for this
 };
 
@@ -473,6 +475,10 @@ public:
   void Skins_Repaint_PowerPlane(wxRect &rect, DCTYPE &dc);
 
   int RePaint_HQ35X(int startx, int starty, int width, int height);
+  int RePaint_Fill1024(int startx, int starty, int width, int height);
+  int RePaint_FitWindow(int startx, int starty, int width, int height);
+  int RePaint_BoxFilter(int destW, int destH);
+  void ComputeFitWindowSize(int *outW, int *outH);
   int RePaint_AAGray(int startx, int starty, int width, int height);
   int RePaint_AntiAliased(int startx, int starty, int width, int height);
 
@@ -495,6 +501,7 @@ public:
   long mousemoved;
 
   void OnMouseMove(wxMouseEvent &event);
+  void OnSize(wxSizeEvent &event);
   void OnKeyDown(wxKeyEvent &event);
   void OnKeyUp(wxKeyEvent &event);
   void OnChar(wxKeyEvent &event);
@@ -543,6 +550,7 @@ EVT_PAINT(LisaWin::OnPaint)
 // EVT_RIGHT_UP(LisaWin::OnMouseMove)
 
 EVT_MOUSE_EVENTS(LisaWin::OnMouseMove)
+EVT_SIZE(LisaWin::OnSize)
 
 END_EVENT_TABLE()
 
@@ -639,6 +647,8 @@ enum
   ID_LISALIST2,
 
   ID_VID_HQ35X,
+  ID_VID_FILL1024,
+  ID_VID_FITWINDOW,
   ID_VID_AA,
   ID_VID_AAG,
   // ID_VID_SCALED,
@@ -832,6 +842,8 @@ public:
   void OnVideoAntiAliased(wxCommandEvent &event);
   void OnVideoAAGray(wxCommandEvent &event);
   void OnVideoHQ35X(wxCommandEvent &event);
+  void OnVideoFill1024(wxCommandEvent &event);
+  void OnVideoFitWindow(wxCommandEvent &event);
   // void OnVideoScaled(wxCommandEvent& event);
   void OnVideoDoubleY(wxCommandEvent &event);
   void OnVideoSingleY(wxCommandEvent &event);
@@ -1023,6 +1035,8 @@ EVT_MENU(wxID_PASTE, LisaEmFrame::OnPasteToKeyboard)
 EVT_MENU(ID_VID_AA, LisaEmFrame::OnVideoAntiAliased)
 EVT_MENU(ID_VID_AAG, LisaEmFrame::OnVideoAAGray)
 EVT_MENU(ID_VID_HQ35X, LisaEmFrame::OnVideoHQ35X)
+EVT_MENU(ID_VID_FILL1024, LisaEmFrame::OnVideoFill1024)
+EVT_MENU(ID_VID_FITWINDOW, LisaEmFrame::OnVideoFitWindow)
 
 EVT_MENU(ID_VID_DY, LisaEmFrame::OnVideoDoubleY)
 EVT_MENU(ID_VID_SY, LisaEmFrame::OnVideoSingleY)
@@ -1194,6 +1208,12 @@ static wxCoord screen_to_mouse[364 * 3]; // 2X,3Y mode is the largest we can do
 static wxCoord screen_to_mouse_hq3x[364 * 3];
 static int yoffset[504]; // lookup table for pointer into video display (to prevent multiplication)
 
+// Fit to Window's target height tracks the live window size and isn't bounded by
+// any fixed-ratio mode's table size, so it gets its own dynamically-sized mapping
+// instead of sharing the fixed screen_to_mouse[] above.
+static wxCoord *fitwindow_screen_to_mouse = NULL;
+static int fitwindow_screen_to_mouse_cap = 0;
+
 // sets scaling lenses for hidpi, used to translate mouse and display coordinates from physical display to Lisa
 // gets called by set_hidpi_scale(), but only used for setting the lens
 // :TODO: delete this
@@ -1290,6 +1310,40 @@ void buildscreenymap_2Y(void)
   {
     screen_to_mouse[y] = y >> 1;
     screen_y_map[y >> 1] = y;
+  }
+}
+
+void buildscreenymap_generic(int destH)
+{
+  // Maps display row -> native Lisa scanline for an arbitrary, possibly non-integer,
+  // vertical scale factor (used by the Fit-to-Window mode, where destH changes with
+  // the window size). Unlike the fixed-ratio modes, this isn't bounded by the shared
+  // screen_to_mouse[] table's size - it grows fitwindow_screen_to_mouse[] as needed,
+  // so a large (e.g. 4K/5K) window isn't artificially capped.
+  wxCoord y;
+  if (destH < 1)
+    destH = 1;
+  if (destH > 16384) // sanity cap only, not a real hardware limit
+    destH = 16384;
+
+  if (destH > fitwindow_screen_to_mouse_cap)
+  {
+    delete[] fitwindow_screen_to_mouse;
+    fitwindow_screen_to_mouse = new wxCoord[destH];
+    fitwindow_screen_to_mouse_cap = destH;
+  }
+
+  ALERT_LOG(0, "building...");
+  for (y = 0; y < 364; y++)
+    yoffset[y] = y * 90;
+
+  for (y = 0; y < destH; y++)
+  {
+    int srcy = (int)(((long)y * 364) / destH);
+    if (srcy > 363)
+      srcy = 363;
+    fitwindow_screen_to_mouse[y] = srcy;
+    screen_y_map[srcy] = y;
   }
 }
 
@@ -1442,6 +1496,17 @@ void LisaWin::SetVideoMode(int mode)
     if (mode != 0x3a)
       lisa_ui_video_mode = mode;
 
+    // Fit to Window deliberately sizes the drawn bitmap to exactly match this
+    // window's own size every repaint - with scrollbars enabled, that's exactly the
+    // condition that can trigger a scrollbar-visibility feedback loop (a scrollbar
+    // appearing shrinks the available area, which changes the next computed size,
+    // which can then remove the scrollbar again, repeating indefinitely and leaving
+    // GetSize() reporting a value that doesn't quite match what actually got drawn).
+    // Scrolling doesn't make sense for a mode whose entire point is to always fill
+    // the window anyway, so just disable scrollbars outright while it's active.
+    ShowScrollbars(mode == vidmod_fitwindow ? wxSHOW_SB_NEVER : wxSHOW_SB_DEFAULT,
+                   mode == vidmod_fitwindow ? wxSHOW_SB_NEVER : wxSHOW_SB_DEFAULT);
+
     update_menu_checkmarks();
 
     delete my_lisabitmap;
@@ -1496,6 +1561,37 @@ void LisaWin::SetVideoMode(int mode)
       o_effective_lisa_vid_size_y = _H(364 * 2);
       RePainter = &LisaWin::RePaint_DoubleY;
       break;
+
+    case vidmod_fill1024:
+      buildscreenymap_2Y();
+      skin.screen_origin_x = 0;
+      skin.screen_origin_y = 0;
+      effective_lisa_vid_size_x = _H(1024);
+      effective_lisa_vid_size_y = _H(364 * 2);
+      o_effective_lisa_vid_size_x = _H(1024);
+      o_effective_lisa_vid_size_y = _H(364 * 2);
+      RePainter = &LisaWin::RePaint_Fill1024;
+      break;
+
+    case vidmod_fitwindow:
+    {
+      int fw, fh;
+      // Fit to Window already computes the exact pixel size to fill the window, so
+      // any separate zoom % on top of that would force a second resample pass
+      // (wx's own DC-level scaling) on top of the box filter's - locking to 100%
+      // keeps this mode a single resampling pass, drawn at the true physical size.
+      hidpi_scale = 1.0;
+      ComputeFitWindowSize(&fw, &fh);
+      buildscreenymap_generic(fh);
+      skin.screen_origin_x = 0;
+      skin.screen_origin_y = 0;
+      effective_lisa_vid_size_x = _H(fw);
+      effective_lisa_vid_size_y = _H(fh);
+      o_effective_lisa_vid_size_x = _H(fw);
+      o_effective_lisa_vid_size_y = _H(fh);
+      RePainter = &LisaWin::RePaint_FitWindow;
+    }
+    break;
 
     case vidmod_raw:
       buildscreenymap_raw();
@@ -2463,6 +2559,30 @@ void LisaEmFrame::OnVideoHQ35X(wxCommandEvent& WXUNUSED(event))
       } // even still too small, go raw bits mode.
     }
     my_lisawin->SetVideoMode(vidmod_hq35x);
+}
+
+void LisaEmFrame::OnVideoFill1024(wxCommandEvent& WXUNUSED(event))
+{
+    if (skins_on)
+    {
+      if (yesnomessagebox("This mode does not work with the Lisa Skin.  Shut off the skin?",
+                          "Remove Skin?") == 0)
+        return;
+    }
+    turn_skins_off();
+    my_lisawin->SetVideoMode(vidmod_fill1024);
+}
+
+void LisaEmFrame::OnVideoFitWindow(wxCommandEvent& WXUNUSED(event))
+{
+    if (skins_on)
+    {
+      if (yesnomessagebox("This mode does not work with the Lisa Skin.  Shut off the skin?",
+                          "Remove Skin?") == 0)
+        return;
+    }
+    turn_skins_off();
+    my_lisawin->SetVideoMode(vidmod_fitwindow);
 }
 
 void LisaEmFrame::OnVideoAAGray(wxCommandEvent& WXUNUSED(event))
@@ -5949,6 +6069,267 @@ int LisaWin::RePaint_DoubleY(int startx, int starty, int endx, int endy)
     return 1;
 }
 
+int LisaWin::RePaint_BoxFilter(int destW, int destH)
+{
+    // Generalized 2-axis box-filter (coverage-weighted grayscale) upscaler from the
+    // native 720x364 Lisa framebuffer to an arbitrary destW x destH target. Each
+    // output pixel's exact fractional overlap with up to 2 source pixels per axis (so
+    // up to 4 source taps total) is computed and blended - this is the technique
+    // RePaint_Fill1024 introduced for its horizontal axis (720->1024, ratio 64:45),
+    // generalized here to both axes and to any target size, so it can back both a
+    // fixed target (Fill 1024x768) and a live-resized one (Fit to Window). It
+    // degenerates to exact nearest-neighbor replication whenever destW/720 or
+    // destH/364 happens to be a clean integer ratio (e.g. the fixed Fill mode's
+    // exact vertical 2x), so no separate integer-ratio special case is needed.
+    // Always redraws the full frame (no dirty-rect optimization) for simplicity.
+    int x, y;
+    uint8 byteval;
+    uint32 d;
+
+    if (skins_on)
+    {
+      ALERT_LOG(0, "Skins should not be on!!!!");
+      turn_skins_off();
+    }
+
+    if (destW < 1)
+      destW = 1;
+    if (destH < 1)
+      destH = 1;
+
+    if (!my_lisabitmap || my_lisabitmap->GetWidth() != destW || my_lisabitmap->GetHeight() != destH)
+    {
+      delete my_lisabitmap;
+      delete my_memDC;
+      my_memDC = new class wxMemoryDC;
+      my_lisabitmap = new class wxBitmap(destW, destH, DEPTH);
+
+      my_memDC->SelectObjectAsSource(*my_lisabitmap);
+      my_memDC->SetBrush(FILLERBRUSH);
+      my_memDC->SetPen(FILLERPEN);
+      my_memDC->DrawRectangle(0, 0, destW, destH);
+
+      delete display_image;
+      display_image = NULL;
+    }
+
+    if (!my_lisabitmap)
+      return 0;
+
+    if (!display_image)
+      display_image = new wxImage(my_lisabitmap->ConvertToImage());
+
+    // horizontal box-filter LUT (source column(s) + coverage weights), computed once
+    // per frame and reused for every row.
+    int *hsrc0 = new int[destW];
+    int *hsrc1 = new int[destW];
+    uint32 *hcov0 = new uint32[destW];
+    uint32 *hcov1 = new uint32[destW];
+    uint32 *htot = new uint32[destW];
+
+    for (x = 0; x < destW; x++)
+    {
+      uint64 start64 = (uint64)x * 720 * 1024 / destW;
+      uint64 end64 = (uint64)(x + 1) * 720 * 1024 / destW;
+      if (end64 <= start64)
+        end64 = start64 + 1;
+
+      uint32 src0 = (uint32)(start64 >> 10);
+      uint32 src1 = (uint32)((end64 - 1) >> 10);
+      if (src0 > 719)
+        src0 = 719;
+      if (src1 > 719)
+        src1 = 719;
+
+      hsrc0[x] = src0;
+      hsrc1[x] = src1;
+      htot[x] = (uint32)(end64 - start64);
+
+      if (src1 == src0)
+      {
+        hcov0[x] = htot[x];
+        hcov1[x] = 0;
+      }
+      else
+      {
+        uint64 boundary64 = (uint64)(src0 + 1) << 10;
+        hcov0[x] = (uint32)(boundary64 - start64);
+        hcov1[x] = (uint32)(end64 - boundary64);
+      }
+    }
+
+    for (y = 0; y < destH; y++)
+    {
+      uint64 vstart64 = (uint64)y * 364 * 1024 / destH;
+      uint64 vend64 = (uint64)(y + 1) * 364 * 1024 / destH;
+      if (vend64 <= vstart64)
+        vend64 = vstart64 + 1;
+
+      uint32 vsrc0 = (uint32)(vstart64 >> 10);
+      uint32 vsrc1 = (uint32)((vend64 - 1) >> 10);
+      if (vsrc0 > 363)
+        vsrc0 = 363;
+      if (vsrc1 > 363)
+        vsrc1 = 363;
+
+      uint32 vtot = (uint32)(vend64 - vstart64);
+      uint32 vcov0, vcov1;
+
+      if (vsrc1 == vsrc0)
+      {
+        vcov0 = vtot;
+        vcov1 = 0;
+      }
+      else
+      {
+        uint64 vboundary64 = (uint64)(vsrc0 + 1) << 10;
+        vcov0 = (uint32)(vboundary64 - vstart64);
+        vcov1 = (uint32)(vend64 - vboundary64);
+      }
+
+      for (x = 0; x < destW; x++)
+      {
+        int src0x = hsrc0[x], src1x = hsrc1[x];
+        uint32 hc0 = hcov0[x], hc1 = hcov1[x], ht = htot[x];
+        int bitpos;
+        uint32 level, hval0, hval1;
+
+        bitpos = 7 - (src0x & 7);
+        byteval = lisaram[videolatchaddress + ((yoffset[vsrc0] + (src0x >> 3)) & 32767)];
+        level = bright[((byteval >> bitpos) & 1) ? 7 : 0];
+        hval0 = level * hc0;
+
+        if (hc1)
+        {
+          bitpos = 7 - (src1x & 7);
+          byteval = lisaram[videolatchaddress + ((yoffset[vsrc0] + (src1x >> 3)) & 32767)];
+          level = bright[((byteval >> bitpos) & 1) ? 7 : 0];
+          hval0 += level * hc1;
+        }
+        hval0 /= ht;
+
+        if (vcov1)
+        {
+          bitpos = 7 - (src0x & 7);
+          byteval = lisaram[videolatchaddress + ((yoffset[vsrc1] + (src0x >> 3)) & 32767)];
+          level = bright[((byteval >> bitpos) & 1) ? 7 : 0];
+          hval1 = level * hc0;
+
+          if (hc1)
+          {
+            bitpos = 7 - (src1x & 7);
+            byteval = lisaram[videolatchaddress + ((yoffset[vsrc1] + (src1x >> 3)) & 32767)];
+            level = bright[((byteval >> bitpos) & 1) ? 7 : 0];
+            hval1 += level * hc1;
+          }
+          hval1 /= ht;
+
+          d = (hval0 * vcov0 + hval1 * vcov1) / vtot;
+        }
+        else
+        {
+          d = hval0;
+        }
+
+        display_image->SetRGB(x, y, (uint8)d, (uint8)d, (uint8)(d + EXTRABLUE));
+      }
+    }
+
+    delete[] hsrc0;
+    delete[] hsrc1;
+    delete[] hcov0;
+    delete[] hcov1;
+    delete[] htot;
+
+    delete my_lisabitmap;
+    my_lisabitmap = new wxBitmap(*display_image);
+    my_memDC->SelectObjectAsSource(*my_lisabitmap);
+
+    e_dirty_x_min = 0;
+    e_dirty_x_max = destW;
+    e_dirty_y_min = 0;
+    e_dirty_y_max = destH;
+
+    memcpy(dirtyvidram, &lisaram[videolatchaddress], 32768);
+    repaintall |= REPAINT_INVALID_WINDOW | REPAINT_VIDEO_TO_SKIN;
+
+    return 1;
+}
+
+int LisaWin::RePaint_Fill1024(int startx, int starty, int endx, int endy)
+{
+    // Fixed 1024x768-panel target: 720x364 -> 1024x728 (exact vertical 2x, box-filter
+    // horizontal at the non-integer 64:45 ratio). See RePaint_BoxFilter for the
+    // shared implementation.
+    return RePaint_BoxFilter(1024, 364 * 2);
+}
+
+void LisaWin::ComputeFitWindowSize(int *outW, int *outH)
+{
+    // Largest box with the same 1024:728 aspect ratio as the fixed Fill 1024x768
+    // mode that fits inside LisaWin's own actual on-screen area. Deliberately using
+    // this window's own GetSize() rather than my_lisaframe->GetRect(): the frame's
+    // outer rect includes the status bar (and title bar), and wx already keeps this
+    // window's own size in sync with the frame's real content area (excluding the
+    // status bar) on every resize - that's the same mechanism that already makes the
+    // image rescale correctly when the window is resized.
+    int w_width = 1024, w_height = 768; // sane fallback before the frame exists
+
+    GetSize(&w_width, &w_height);
+    double hs = (hidpi_scale > 0.0) ? hidpi_scale : 1.0;
+    w_width = (int)(w_width / hs);
+    w_height = (int)(w_height / hs);
+
+    if (w_width < 64)
+      w_width = 64;
+    if (w_height < 64)
+      w_height = 64;
+
+    int destW = w_width;
+    int destH = (int)(((long)destW * (364 * 2)) / 1024);
+    if (destH > w_height)
+    {
+      destH = w_height;
+      destW = (int)(((long)destH * 1024) / (364 * 2));
+    }
+
+    if (destH > 16384) // sanity cap only, not a real hardware limit
+    {
+      destH = 16384;
+      destW = (int)(((long)destH * 1024) / (364 * 2));
+    }
+    if (destW < 64)
+      destW = 64;
+    if (destH < 64)
+      destH = 64;
+
+    *outW = destW;
+    *outH = destH;
+}
+
+int LisaWin::RePaint_FitWindow(int startx, int starty, int endx, int endy)
+{
+    // Same box-filter technique as RePaint_Fill1024, but the target size tracks the
+    // live window size (preserving the 1024:728 aspect ratio) instead of being fixed.
+    int fw, fh;
+
+    // Re-assert the 100% lock every repaint - if the user changes zoom % via the
+    // menu/hotkey while this mode is already active, don't let a second DC-level
+    // resample stage stack on top of the box filter.
+    hidpi_scale = 1.0;
+
+    ComputeFitWindowSize(&fw, &fh);
+
+    if (fw != effective_lisa_vid_size_x || fh != effective_lisa_vid_size_y)
+      buildscreenymap_generic(fh);
+
+    effective_lisa_vid_size_x = fw;
+    effective_lisa_vid_size_y = fh;
+    o_effective_lisa_vid_size_x = fw;
+    o_effective_lisa_vid_size_y = fh;
+
+    return RePaint_BoxFilter(fw, fh);
+}
 
 int LisaWin::RePaint_2X3Y(int startx, int starty, int endx, int endy)
 {
@@ -6155,10 +6536,11 @@ int LisaWin::OnPaint_skinless(wxRect &rect, DCTYPE &dc)
     height = rect.GetHeight(); // get region to repaint
 
     wxCoord w, h;
-    dc.GetSize(&w, &h);                 // these are inside the window, and scaled * hidpi_scale via SetUserScale, and this is virtually much larger due to scrolling
-    wxRect r = my_lisaframe->GetRect(); // these are outside the viewport, and the true size of the window, unscaled - want this one!
-    w_width = r.GetWidth();
-    w_height = r.GetHeight();
+    dc.GetSize(&w, &h); // these are inside the window, and scaled * hidpi_scale via SetUserScale, and this is virtually much larger due to scrolling
+    // This window's own size, unscaled - the true drawable area, correctly excluding
+    // the frame's title bar/menu bar/status bar (unlike my_lisaframe->GetRect(),
+    // which is the full outer frame including all of that chrome).
+    GetSize(&w_width, &w_height);
     ww_width = w_width / hidpi_scale;
     ww_height = w_height / hidpi_scale;
 
@@ -6191,7 +6573,7 @@ int LisaWin::OnPaint_skinless(wxRect &rect, DCTYPE &dc)
     }
 
     ox = (ww_width - _H(effective_lisa_vid_size_x)) / 2;
-    oy = (ww_height - _H(effective_lisa_vid_size_x)) / 2;
+    oy = (ww_height - _H(effective_lisa_vid_size_y)) / 2;
 
     if (ox < 0 || (!skinless_center))
       ox = 0;
@@ -6955,6 +7337,17 @@ void LisaWin::OnMouseMove(wxMouseEvent &event)
         y -= oy;
         ;
       }
+      else if (lisa_ui_video_mode == vidmod_fill1024 || lisa_ui_video_mode == vidmod_fitwindow)
+      {
+        // Both modes' displayed bitmap is wider than the Lisa's native 720px - rescale
+        // the on-screen x coordinate back down to native Lisa coordinate space, the
+        // inverse of the box-filter resample RePaint_BoxFilter does when drawing.
+        // effective_lisa_vid_size_x is always 1024 for Fill1024, and tracks the live
+        // window size for Fit to Window.
+        x -= skin.screen_origin_x;
+        y -= skin.screen_origin_y;
+        x = x * 720 / effective_lisa_vid_size_x;
+      }
       else
       {
         x -= skin.screen_origin_x;
@@ -6987,7 +7380,10 @@ void LisaWin::OnMouseMove(wxMouseEvent &event)
         y = o_effective_lisa_vid_size_y;
         mouse_in_crt = 0;
       }
-      y = screen_to_mouse[y];
+      if (lisa_ui_video_mode == vidmod_fitwindow && fitwindow_screen_to_mouse && y < fitwindow_screen_to_mouse_cap)
+        y = fitwindow_screen_to_mouse[y];
+      else
+        y = screen_to_mouse[y];
     }
 
     if (x < 0 || x > lisa_vid_size_x)
@@ -7337,6 +7733,19 @@ void LisaWin::OnMouseMove(wxMouseEvent &event)
                 pos.x, pos.y);
     }
 #endif
+}
+
+void LisaWin::OnSize(wxSizeEvent& event)
+{
+    // Fit-to-Window mode's target size tracks the live window size, so a resize has
+    // to force a rebuild even when nothing on the Lisa's own screen changed - every
+    // other video mode has a fixed target size and doesn't need this.
+    if (lisa_ui_video_mode == vidmod_fitwindow)
+    {
+      dirtyscreen = 1;
+      Refresh(false, NULL);
+    }
+    event.Skip();
 }
 
 
@@ -7891,6 +8300,8 @@ void update_menu_checkmarks(void)
       DisplayMenu->Check(ID_VID_AA, (lisa_ui_video_mode == vidmod_aa));
       DisplayMenu->Check(ID_VID_AAG, (lisa_ui_video_mode == vidmod_aag));
       DisplayMenu->Check(ID_VID_HQ35X, (lisa_ui_video_mode == vidmod_hq35x));
+      DisplayMenu->Check(ID_VID_FILL1024, (lisa_ui_video_mode == vidmod_fill1024));
+      DisplayMenu->Check(ID_VID_FITWINDOW, (lisa_ui_video_mode == vidmod_fitwindow));
 
       DisplayMenu->Check(ID_VID_DY, (lisa_ui_video_mode == vidmod_2y));
       DisplayMenu->Check(ID_VID_SY, (lisa_ui_video_mode == vidmod_raw));
@@ -8900,6 +9311,8 @@ LisaEmFrame::LisaEmFrame(const wxString& title)
     DisplayScaleSub->Append(ID_VID_SCALE_ZOOMOUT, wxT("Zoom Out \tCtrl--"), wxT("Zoom Out"));
 
     DisplayMenu->AppendRadioItem(ID_VID_HQ35X, wxT("HQX Upscaler"), wxT("Aspect Corrected High Quality Magnification Filer hq3.5x"));
+    DisplayMenu->AppendRadioItem(ID_VID_FILL1024, wxT("Fill 1024x768"), wxT("Box-filter antialiased fill for a fixed 1024x768 panel"));
+    DisplayMenu->AppendRadioItem(ID_VID_FITWINDOW, wxT("Fit to Window"), wxT("Box-filter antialiased fill for the current window size, at a 1024x768 aspect ratio"));
     DisplayMenu->AppendRadioItem(ID_VID_AA, wxT("AntiAliased"), wxT("Aspect Corrected with Anti Aliasing"));
     DisplayMenu->AppendRadioItem(ID_VID_AAG, wxT("AntiAliased with Gray Replacement"), wxT("Aspect Corrected with Anti Aliasing and Gray Replacing"));
     DisplayMenu->AppendRadioItem(ID_VID_SY, wxT("Raw"), wxT("Uncorrected Aspect Ratio"));

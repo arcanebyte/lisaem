@@ -252,6 +252,9 @@ char read_serial_port_localport(unsigned int port);
 void write_serial_port_nothing(unsigned int port, char data);
 void write_serial_port_loopbackplug(unsigned int port, char data);
 void write_serial_port_localport(unsigned int port, char data);
+#ifndef __MSVCRT__
+void write_serial_port_pipe(unsigned int port, char data);
+#endif
 void write_serial_port_imagewriter(unsigned int port, char data);
 
 uint32 get_baud_rate(unsigned int port);
@@ -490,6 +493,78 @@ void read_port_if_ready_shell(unsigned int port)
   }
 }
 
+#ifndef __MSVCRT__
+
+static int poll_serial_port_pipe_byte(unsigned int port)
+{
+  FILE *f = port ? scc_a_port_F : scc_b_port_F;
+  struct pollfd pfd;
+  unsigned char data;
+  int fd;
+  ssize_t n;
+
+  if (!f)
+    return -1;
+
+  fd = fileno(f);
+  if (fd < 0)
+    return -1;
+
+  pfd.fd = fd;
+  pfd.events = POLLIN;
+  pfd.revents = 0;
+
+  if (poll(&pfd, 1, 0) <= 0)
+    return -1;
+
+  if (!(pfd.revents & (POLLIN | POLLHUP)))
+    return -1;
+
+  n = read(fd, &data, 1);
+
+  if (n == 1)
+    return (int)data;
+
+  return -1;
+}
+
+
+void read_port_if_ready_pipe(unsigned int port)
+{
+  int data;
+
+  if (fliflo_buff_is_full(&SCC_READ[port]))
+    return;
+
+  if (port == 0 && waiting_for_lisa_to_read_port_b)
+    return;
+
+  if (port == 0 &&
+      (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp <
+       SCC_MIN_CYCLES_BETWEEN_READS))
+    return;
+
+  data = poll_serial_port_pipe_byte(port);
+
+  if (data < 0)
+    return;
+
+  if (port == 0)
+    waiting_for_lisa_to_read_port_b = 1;
+
+  fliflo_buff_add(&SCC_READ[port],
+                  (uint8)data & scc_bits_per_char_mask[port]);
+
+  RX_CHAR_AVAILABLE(port);
+
+  DEBUG_LOG(0,
+            "Received 0x%02x (%d) from pipe on scc port:%d",
+            (uint8)data, data, port);
+}
+
+#endif
+
+
 void read_port_if_ready_pty(unsigned int port)
 {
   if (fliflo_buff_is_full(&SCC_READ[port]))
@@ -708,6 +783,12 @@ void initialize_scc(int actual)
       scc_fn[port].set_rts = set_rts_loopbackplug;
       break;
 #ifndef __MSVCRT__
+    case SCC_PIPE:
+      scc_fn[port].read_serial_port = read_serial_port_nothing;
+      scc_fn[port].write_serial_port = write_serial_port_pipe;
+      scc_fn[port].read_port_if_ready = read_port_if_ready_pipe;
+      break;
+
     case SCC_TELNETD:
       scc_fn[port].read_serial_port = read_serial_port_telnetd;
       scc_fn[port].write_serial_port = write_serial_port_telnetd;
@@ -1774,6 +1855,11 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
         read_port_if_ready_tty(0);
       if (serial_a == SCC_TTY)
         read_port_if_ready_tty(1);
+
+      if (serial_b == SCC_PIPE)
+        read_port_if_ready_pipe(0);
+      if (serial_a == SCC_PIPE)
+        read_port_if_ready_pipe(1);
 #endif
       if (serial_b == SCC_TERMINAL)
         read_port_if_ready_terminal(0);
@@ -2356,6 +2442,29 @@ void write_serial_port_imagewriter(unsigned int port, char data)
     }
   }
 }
+
+#ifndef __MSVCRT__
+
+void write_serial_port_pipe(unsigned int port, char data)
+{
+  FILE *f = port ? scc_a_port_F : scc_b_port_F;
+  unsigned char out = (unsigned char)data;
+  int fd;
+
+  if (!f)
+    return;
+
+  fd = fileno(f);
+
+  if (fd < 0)
+    return;
+
+  if (write(fd, &out, 1) != 1)
+    DEBUG_LOG(0, "Could not write byte to pipe on scc port:%d", port);
+}
+
+#endif
+
 
 void write_serial_port_localport(unsigned int port, char data)
 {

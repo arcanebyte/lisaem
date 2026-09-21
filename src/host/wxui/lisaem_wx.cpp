@@ -9772,7 +9772,7 @@ extern "C" void connect_device_to_serial(int port, FILE **scc_port_F, uint8 *ser
       if (!*scc_port_F)
       {
         wxString err = wxString();
-        err.Printf(_T("Could not map Serial port %c to file %s"), (port == 0 ? 'A' : 'B'), cstr_param);
+        err.Printf(_T("Could not map Serial port %c to file %s"), (port == 0 ? 'B' : 'A'), cstr_param);
         wxMessageBox(err, _T("Serial port configuration"), wxICON_INFORMATION | wxOK);
         *scc_port_F = NULL;
         *serial = SCC_NOTHING;
@@ -9786,11 +9786,11 @@ extern "C" void connect_device_to_serial(int port, FILE **scc_port_F, uint8 *ser
 
     if (setting->IsSameAs(_T("Pipe"), false))
     {
-      *scc_port_F = popen(cstr_param, "r+b");
+      *scc_port_F = popen(cstr_param, "r+");
       if (!*scc_port_F)
       {
         wxString err = wxString();
-        err.Printf(_T("Could not map Serial port %c to pipe %s"), (port == 0 ? 'A' : 'B'), cstr_param);
+        err.Printf(_T("Could not map Serial port %c to pipe %s"), (port == 0 ? 'B' : 'A'), cstr_param);
         wxMessageBox(err, _T("Serial port configuration"), wxICON_INFORMATION | wxOK);
         *scc_port_F = NULL;
         *serial = SCC_NOTHING;

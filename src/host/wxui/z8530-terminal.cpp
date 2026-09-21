@@ -57,6 +57,7 @@
 #include <wx/choicdlg.h>
 #include <wx/utils.h>
 #include <wx/dnd.h>
+#include <DialogLog.h>
 
 #include <machine.h>
 #include <fliflo_queue.hpp>

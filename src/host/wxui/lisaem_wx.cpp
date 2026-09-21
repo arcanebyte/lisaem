@@ -210,6 +210,7 @@ long emulation_time = 25;
 
 #include <LisaConfig.h>
 #include <LisaConfigFrame.h>
+#include <DialogLog.h>
 #include <LisaSkin.h>
 
 // sounds, images, etc.
@@ -1213,6 +1214,7 @@ void setup_hidpi(void)
 
 char *paste_to_keyboard = NULL;
 static int idx_paste_to_kb = 0;
+static int paste_from_keyboard_file = 0; // LISAEM_KEYBOARD_FILE: ^A + byte is a raw COPS code
 
 // ::TODO:: cleanup, remove
 // external interface to TerminalWx console - trampoline functions. Keypresses sent to console will mirror to my_lisawin
@@ -1800,6 +1802,159 @@ extern "C"  void dumpallscreenshot(void)
 
 #endif
 
+// LISAEM_SCREEN_DUMP=<file.png>: about once a second of host time, save the
+// Lisa's display (720x364, one bit per pixel, read from video RAM) to that
+// file, so a script can see the screen without a window capture. The file
+// is written under a temporary name and renamed, so readers never see a
+// partial file.
+static void screen_dump_if_due(void)
+{
+    static int enabled = -1;
+    static char path[1024];
+    static wxLongLong last = 0;
+
+    if (enabled < 0)
+    {
+      const char *e = getenv("LISAEM_SCREEN_DUMP");
+      enabled = (e != NULL && *e != '\0');
+      if (enabled)
+        snprintf(path, sizeof(path), "%s", e);
+    }
+    if (!enabled || !lisaram)
+      return;
+
+    wxLongLong now = wxGetLocalTimeMillis();
+    if (now - last < 1000)
+      return;
+    last = now;
+
+    const int w = 720, h = 364, bytes_per_row = 90;
+    wxImage image(w, h, false);
+    for (int y = 0; y < h; y++)
+      for (int x = 0; x < w; x++)
+      {
+        uint8 b = lisaram[videolatchaddress + y * bytes_per_row + (x >> 3)];
+        uint8 v = (b & (0x80 >> (x & 7))) ? 0 : 255;  // a set bit is black
+        image.SetRGB(x, y, v, v, v);
+      }
+
+    wxString tmp = wxString(path) + _T(".tmp");
+    if (image.SaveFile(tmp, wxBITMAP_TYPE_PNG))
+      wxRenameFile(tmp, wxString(path), true);
+}
+
+// LISAEM_KEYBOARD_FILE=<file>: about five times a second of host time, look
+// for bytes appended to that file since the last look and type them on the
+// Lisa keyboard, through the same path as Edit/Paste (one ASCII character
+// at a time, translated by keydecodetable). A script types by appending to
+// the file. Bytes that arrive while a paste is still going wait for it.
+// A ^A (0x01) byte followed by any byte B sends B to the COPS as a raw key
+// code (bit 7 set: key down, clear: key up), so a script can hold a key.
+static void keyboard_file_if_due(void)
+{
+    static int enabled = -1;
+    static char path[1024];
+    static long offset = 0;
+    static wxLongLong last = 0;
+
+    if (enabled < 0)
+    {
+      const char *e = getenv("LISAEM_KEYBOARD_FILE");
+      enabled = (e != NULL && *e != '\0');
+      if (enabled)
+        snprintf(path, sizeof(path), "%s", e);
+    }
+    if (!enabled || paste_to_keyboard)
+      return;
+
+    wxLongLong now = wxGetLocalTimeMillis();
+    if (now - last < 200)
+      return;
+    last = now;
+
+    FILE *f = fopen(path, "rb");
+    if (!f)
+      return;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    if (size < offset)       // file was truncated: start again from the top
+      offset = 0;
+    if (size > offset)
+    {
+      long n = size - offset;
+      char *buf = (char *)calloc(1, n + 1);
+      fseek(f, offset, SEEK_SET);
+      n = fread(buf, 1, n, f);
+      buf[n] = 0;
+      offset += n;
+      ALERT_LOG(0, "LISAEM_KEYBOARD_FILE: typing %ld bytes", n);
+      paste_to_keyboard = buf;
+      idx_paste_to_kb = 0;
+      paste_from_keyboard_file = 1;
+    }
+    fclose(f);
+}
+
+// LISAEM_MOUSE_MOVE_AT=<seconds>: once, that many seconds of host time
+// after the first check, do what moving the pointer to the middle of the
+// Lisa screen does (add_mouse_event, then seek_mouse_event), so a script
+// can test how a guest copes with mouse reports.
+static void mouse_move_if_due(void)
+{
+    static int enabled = -1;
+    static double seconds;
+    static wxLongLong start = 0;
+
+    if (enabled < 0)
+    {
+      const char *e = getenv("LISAEM_MOUSE_MOVE_AT");
+      enabled = (e != NULL && *e != '\0');
+      if (enabled)
+        seconds = atof(e);
+      start = wxGetLocalTimeMillis();
+    }
+    if (enabled != 1)
+      return;
+    if ((wxGetLocalTimeMillis() - start).ToDouble() < seconds * 1000.0)
+      return;
+    enabled = 2;
+    ALERT_LOG(0, "LISAEM_MOUSE_MOVE_AT: moving the mouse");
+    fprintf(stderr, "LISAEM_MOUSE_MOVE_AT: moving the mouse\n");
+    add_mouse_event(360, 182, 0);
+    seek_mouse_event();
+}
+
+// LISAEM_FLOPPY_AT=<seconds>,<image>: once, that many seconds of host time
+// after start, insert the disk image into the floppy drive, as the menu's
+// insert command does, without restarting from it (unlike -f).
+static void floppy_insert_if_due(void)
+{
+    static int enabled = -1;
+    static double seconds;
+    static char path[1024];
+    static wxLongLong start = 0;
+
+    if (enabled < 0)
+    {
+      const char *e = getenv("LISAEM_FLOPPY_AT");
+      const char *comma = e ? strchr(e, ',') : NULL;
+      enabled = (comma != NULL && comma[1] != '\0');
+      if (enabled)
+      {
+        seconds = atof(e);
+        snprintf(path, sizeof(path), "%s", comma + 1);
+      }
+      start = wxGetLocalTimeMillis();
+    }
+    if (enabled != 1)
+      return;
+    if ((wxGetLocalTimeMillis() - start).ToDouble() < seconds * 1000.0)
+      return;
+    enabled = 2;
+    int r = floppy_insert(path, 0);
+    fprintf(stderr, "LISAEM_FLOPPY_AT: inserted %s, result %d\n", path, r);
+}
+
 void LisaEmFrame::Update_Status(long elapsed,long idleentry)
 {
     static int counter;
@@ -1906,7 +2061,11 @@ void LisaEmFrame::Update_Status(long elapsed,long idleentry)
       last_lisa_clock_secs = lisa_clock.secs_l;
     }
 #endif
-    
+    screen_dump_if_due();
+    keyboard_file_if_due();
+    mouse_move_if_due();
+    floppy_insert_if_due();
+
 }
 
 #if wxUSE_DRAG_AND_DROP
@@ -2150,13 +2309,21 @@ void LisaEmFrame::OnEmulationTimer(wxTimerEvent& event)
         if (paste_to_keyboard[idx_paste_to_kb])
         {
           ALERT_LOG(0, "Pasting to keyboard: %02x", paste_to_keyboard[idx_paste_to_kb]);
-          keystroke_cops(paste_to_keyboard[idx_paste_to_kb++]);
+          if (paste_from_keyboard_file && paste_to_keyboard[idx_paste_to_kb] == 0x01 &&
+              paste_to_keyboard[idx_paste_to_kb + 1])
+          {
+            send_cops_keycode((uint8)paste_to_keyboard[idx_paste_to_kb + 1]);
+            idx_paste_to_kb += 2;
+          }
+          else
+            keystroke_cops(paste_to_keyboard[idx_paste_to_kb++]);
         }
         else
         {
           idx_paste_to_kb = -1;
           free(paste_to_keyboard);
           paste_to_keyboard = NULL;
+          paste_from_keyboard_file = 0;
           ALERT_LOG(0, "//////// End of paste to keyboard ////////");
         }
       }
@@ -7866,6 +8033,12 @@ extern "C" int yesnomessagebox(char *s, char *t)  // messagebox string of text, 
     text << s;
     wxString title = "";
     title << t;
+    if (LisaEmNoDialogs())
+    {
+        LisaEmLogDialog(title, text, false);
+        return (LisaEmDialogDefault(wxYES_NO | wxNO_DEFAULT) == wxID_YES);
+    }
+    LisaEmLogDialog(title, text, true);
     wxMessageDialog w(my_lisawin, text, title, wxICON_QUESTION | wxYES_NO | wxNO_DEFAULT, wxDefaultPosition);
     return (w.ShowModal() == wxID_YES);
 }

@@ -840,7 +840,7 @@ void init_clock(void)
   clktime = time(&clktime);
   timev = (struct tm *)localtime(&clktime);
 
-  yday = timev->tm_yday;
+  yday = timev->tm_yday + 1; // COPS counts days of the year from 1, tm_yday from 0
   dd_hun = (uint8)(yday / 100);
   dd_ten = (uint8)((yday / 10) % 10);
   dd_one = (uint8)(yday % 10);

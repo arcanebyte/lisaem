@@ -440,6 +440,8 @@ extern void debug_off(void);
 
 #endif
 
+void trace_slot_autovector(int avno, const char *source); // TEMPORARY DIAGNOSTIC TRACE
+
 // only two are available: empty or dual parallel
 int get_nmi_pending_irq(void) { return 0; }
 
@@ -619,6 +621,7 @@ static inline void fire_pending_internal_autovector(void)
     if (i == 1 && floppy_FDIR)
       append_floppy_log("fire_pending_int_av:Firing IRQ1 while floppy_FDIR is set");
 #endif
+    trace_slot_autovector(i, "get_pending_vector"); // TEMPORARY
     reg68k_internal_autovector(i);
   }
 #ifdef DEBUG
@@ -2751,7 +2754,30 @@ void reg68k_update_supervisor_external(void) { lastsflag = regs.sr.sr_struct.s; 
   }
 #define GETSUPERVISOR() (reg68k_sr.sr_struct.s)
 
-void reg68k_internal_autovector(int avno) { reg68k_internal_vector(V_AUTO + avno - 1, reg68k_pc, 0); }
+// ---- TEMPORARY DIAGNOSTIC TRACE (not for commit): slot interrupt levels 3-5 ----
+extern void profile_trace(const char *fmt, ...);
+void trace_slot_autovector(int avno, const char *source)
+{
+  int i;
+  char vs[512];
+  int n = 0;
+  if (avno < 3 || avno > 5)
+    return;
+  for (i = 3; i < 9; i++)
+    n += snprintf(vs + n, sizeof(vs) - n, " via%d:act%d irq%d IER%02x IFR%02x PCR%02x", i, via[i].active, via[i].irqnum,
+                  via[i].via[IER], via[i].via[IFR], via[i].via[PCR]);
+  profile_trace("AUTOVECTOR %d from %s pc:%08x sr:%04x exs0:%s exs1:%s exs2:%s |%s", avno, source, reg68k_pc, reg68k_sr.sr_int,
+                get_exs0_pending_irq == get_exs0_pending_irq_2xpar ? "2xpar" : "empty",
+                get_exs1_pending_irq == get_exs1_pending_irq_2xpar ? "2xpar" : "empty",
+                get_exs2_pending_irq == get_exs2_pending_irq_2xpar ? "2xpar" : "empty", vs);
+}
+// ---- end TEMPORARY DIAGNOSTIC TRACE ----
+
+void reg68k_internal_autovector(int avno)
+{
+  trace_slot_autovector(avno, "reg68k_internal_autovector"); // TEMPORARY
+  reg68k_internal_vector(V_AUTO + avno - 1, reg68k_pc, 0);
+}
 
 static uint32 lastoldpc;
 static int32 lastclk;

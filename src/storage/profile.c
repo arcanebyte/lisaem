@@ -841,6 +841,42 @@ char *profile_state_names[] = {
 
 extern void set_next_timer_id(uint8 x);
 
+// ---- TEMPORARY DIAGNOSTIC TRACE (not for commit): ~/lisaem-profile-trace.log ----
+#include <stdarg.h>
+static FILE *profile_trace_f = NULL;
+static long profile_trace_lines = 0;
+static long pt_wstrobe[9], pt_wnostrobe[9], pt_rstrobe[9], pt_rnostrobe[9], pt_pcrstrobe[9];
+void profile_trace(const char *fmt, ...)
+{
+    va_list ap;
+    static int all = -1;
+    if (all < 0)
+        all = getenv("LISAEM_TRACE_ALL") != NULL;
+    // quiet by default: drop per-command ProFile lines and the motherboard port's IER writes
+    if (!all && (strstr(fmt, "REPLY") || strstr(fmt, "CMD RISE") || strstr(fmt, "BUSY DONE") ||
+                 strstr(fmt, "CA1 latched") || !strncmp(fmt, "via2 IER", 8)))
+        return;
+    if (profile_trace_lines > 200000)
+        return;
+    if (!profile_trace_f)
+    {
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/lisaem-profile-trace.log", getenv("HOME") ? getenv("HOME") : "/tmp");
+        profile_trace_f = fopen(path, "w");
+        if (!profile_trace_f)
+            return;
+    }
+    fprintf(profile_trace_f, "%012llx pc:%d/%08x ", (long long)cpu68k_clocks, context, reg68k_pc);
+    va_start(ap, fmt);
+    vfprintf(profile_trace_f, fmt, ap);
+    va_end(ap);
+    fputc('\n', profile_trace_f);
+    fflush(profile_trace_f);
+    if (++profile_trace_lines > 200000)
+        fprintf(profile_trace_f, "trace limit reached\n");
+}
+// ---- end TEMPORARY DIAGNOSTIC TRACE ----
+
 // Start a busy period that ends delay clocks from now; irq.c picks up clock_e as a timer event.
 void profile_schedule_event(ProFileType *P, XTIMER delay)
 {
@@ -855,6 +891,11 @@ void profile_schedule_event(ProFileType *P, XTIMER delay)
 // Lisa lowered /CMD: put the reply on the bus and assert /BSY.
 static void profile_reply(ProFileType *P, uint8 reply)
 {
+    int v = P->vianum;
+    profile_trace("via%d REPLY %02x from state %d cmdblk %02x %02x %02x %02x %02x %02x idxw %d idxr %d | writes strobe %ld nostrobe %ld, reads strobe %ld nostrobe %ld, pcr strobes %ld",
+                  v, reply, P->StateMachineStep, P->DataBlock[4], P->DataBlock[5], P->DataBlock[6], P->DataBlock[7], P->DataBlock[8], P->DataBlock[9],
+                  P->indexwrite, P->indexread, pt_wstrobe[v], pt_wnostrobe[v], pt_rstrobe[v], pt_rnostrobe[v], pt_pcrstrobe[v]);
+    pt_wstrobe[v] = pt_wnostrobe[v] = pt_rstrobe[v] = pt_rnostrobe[v] = pt_pcrstrobe[v] = 0;
     P->reply = reply;
     P->VIA_PA = reply;
     P->BSYLine = 1;
@@ -908,6 +949,8 @@ static void profile_busy_done(ProFileType *P)
 
     P->VIA_PA = P->DataBlock[P->indexread];
     P->BSYLine = 0;
+    profile_trace("via%d BUSY DONE reply %02x -> state %d block %d status %02x%02x%02x%02x", P->vianum, P->reply, P->StateMachineStep, blocknumber,
+                  P->DataBlock[0], P->DataBlock[1], P->DataBlock[2], P->DataBlock[3]);
     DEBUG_LOG(0, "VIA:%d busy done after reply %02x - /BSY high, state:%s", P->vianum, P->reply, profile_state_names[P->StateMachineStep]);
 }
 
@@ -964,6 +1007,12 @@ void ProfileLoop(ProFileType *P, int event)
         nostrobe_warned = 1;
     }
 
+    if (event == PROLOOP_EV_ORA) pt_wstrobe[P->vianum]++;
+    if (event == PROLOOP_EV_ORA_NOSTROBE) pt_wnostrobe[P->vianum]++;
+    if (event == PROLOOP_EV_IRA) pt_rstrobe[P->vianum]++;
+    if (event == PROLOOP_EV_IRA_NOSTROBE) pt_rnostrobe[P->vianum]++;
+    if (event == PROLOOP_EV_STROBE) pt_pcrstrobe[P->vianum]++;
+
     switch (P->StateMachineStep)
     {
 
@@ -978,6 +1027,7 @@ void ProfileLoop(ProFileType *P, int event)
         if (P->CMDLine)
             return;
 
+        profile_trace("via%d CMD RISE bus %02x after reply %02x", P->vianum, P->VIA_PA, P->reply);
         if (P->VIA_PA != 0x55)
         {
             DEBUG_LOG(0, "VIA:%d /CMD rose with %02x on the bus instead of 55 after reply %02x - back to idle", P->vianum, P->VIA_PA, P->reply);

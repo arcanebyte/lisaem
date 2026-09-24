@@ -4205,6 +4205,14 @@ void LisaWin::LogKeyEvent(const wxChar* WXUNUSED(name), wxKeyEvent& event, int k
     case WXK_MENU:
       lisakey = KEYCODE_COMMAND;
       break;
+    case WXK_WINDOWS_LEFT:
+    case WXK_WINDOWS_RIGHT:
+      // a real Apple keyboard's Command/Apple-logo key is reported as the
+      // Super/"Windows" keysym on Linux - map it to the Lisa's Apple key
+      // too, so e.g. Apple+1..N startup-device selection works from real
+      // Apple hardware, not just via the Alt key.
+      lisakey = KEYCODE_COMMAND;
+      break;
 
 #endif
 #if defined(__WXOSX__)
@@ -4214,6 +4222,13 @@ void LisaWin::LogKeyEvent(const wxChar* WXUNUSED(name), wxKeyEvent& event, int k
     // case WXK_CONTROL:            lisakey=KEYCODE_LOPTION;         break;
     // src/host/wxui/lisaem_wx.cpp:3157:14: error: duplicate case value: 'WXK_CONTROL' and 'WXK_COMMAND' both equal '308'
     case WXK_COMMAND:
+      // Physical Command can't be the live Apple-key modifier on Mac: macOS
+      // reserves Cmd-Q/H/M (Quit/Hide/Minimize) at the OS level, so those
+      // keystrokes never reach the app at all. Physical Control already
+      // reaches the Lisa untouched (macOS auto-translates Ctrl+<letter> into
+      // the ASCII control-code range, same as every other platform), so
+      // that's what live Apple+<letter> typing uses instead - this mapping
+      // only matters for Raw Keyboard mode.
       lisakey = KEYCODE_LOPTION;
       break;
 
@@ -4533,38 +4548,13 @@ void LisaWin::OnChar(wxKeyEvent& event)
     }
 #endif
 
-    if (event.CmdDown())
-    {
-      if (keycode == WXK_ADD || keycode == WXK_NUMPAD_ADD ||
-          keycode == 0x2b || keycode == 0x3d)
-      {
-        ALERT_LOG(0, "CTRL+");
-        my_lisaframe->OnZoomIn(foo);
-        return;
-      }
-      if (keycode == WXK_SUBTRACT || keycode == WXK_NUMPAD_SUBTRACT ||
-          keycode == 0x2d)
-      {
-        ALERT_LOG(0, "CTRL-");
-        my_lisaframe->OnZoomOut(foo);
-        return;
-      }
-      if (keycode == '.')
-      {
-        my_lisaframe->OnPause(foo);
-        return;
-      }
-      if (keycode == 'n' || keycode == 'n' - 'a' + 1)
-      {
-        my_lisaframe->OnNewFLOPPY(foo);
-        return;
-      }
-      if (keycode == 'o' || keycode == 'o' - 'a' + 1)
-      {
-        my_lisaframe->OnFLOPPY(foo);
-        return;
-      }
-    }
+    // Zoom/Pause/floppy-insert used to be hijacked here by hand because their
+    // menu accelerators were broken (embedded in the wrong wxMenu::Append
+    // argument, so they never actually fired). Now that those accelerators
+    // (Ctrl-Alt-+/-/./O/N) are fixed, they trigger through the normal menu
+    // system before OnChar ever sees the keystroke - manually intercepting
+    // plain Cmd+<key> here as well would just steal those same keystrokes
+    // from ever reaching the Lisa as live Apple+<key> input.
 
     if (
         keycode == WXK_SHIFT || // avoid inserting extra ascii 1,2,4 on shift,alt,control down.
@@ -9069,8 +9059,8 @@ LisaEmFrame::LisaEmFrame(const wxString& title)
     DisplayScaleSub->AppendRadioItem(ID_VID_SCALE_300, wxT("3.00x"), wxT("Set Video Magnification Size 3.00x"));
 #endif
     DisplayScaleSub->AppendSeparator();
-    DisplayScaleSub->Append(ID_VID_SCALE_ZOOMIN, wxT("Zoom In \tCtrl-+"), wxT("Zoom In"));
-    DisplayScaleSub->Append(ID_VID_SCALE_ZOOMOUT, wxT("Zoom Out \tCtrl--"), wxT("Zoom Out"));
+    DisplayScaleSub->Append(ID_VID_SCALE_ZOOMIN, wxT("Zoom In \tCtrl-Alt-+"), wxT("Zoom In"));
+    DisplayScaleSub->Append(ID_VID_SCALE_ZOOMOUT, wxT("Zoom Out \tCtrl-Alt--"), wxT("Zoom Out"));
 
     DisplayMenu->AppendRadioItem(ID_VID_HQ35X, wxT("HQX Upscaler"), wxT("Aspect Corrected High Quality Magnification Filer hq3.5x"));
     DisplayMenu->AppendRadioItem(ID_VID_AA, wxT("AntiAliased"), wxT("Aspect Corrected with Anti Aliasing"));
@@ -9140,23 +9130,23 @@ LisaEmFrame::LisaEmFrame(const wxString& title)
     helpMenu->Append(ID_LISAFAQ, wxT("Lisa FAQ webpage"), wxT("https://lisafaq.sunder.net"));
     helpMenu->Append(ID_LISALIST2, wxT("LisaList2 Forum"), wxT("https://lisalist2.com"));
 
-    keyMenu->Append(ID_POWERKEY, wxT("Power Button"), wxT("Push the Power Button"));
-    keyMenu->Append(ID_APPLEPOWERKEY, wxT("Apple+Power Button"), wxT("Push Apple + the Power Button"));
+    keyMenu->Append(ID_POWERKEY, wxT("Power Button\tCtrl-Alt-P"), wxT("Push the Power Button"));
+    keyMenu->Append(ID_APPLEPOWERKEY, wxT("Apple+Power Button\tCtrl-Alt-Shift-P"), wxT("Push Apple + the Power Button"));
     keyMenu->AppendSeparator();
 
-    keyMenu->Append(ID_KEY_APL_DOT, wxT("Apple ."), wxT("Apple + ."));
+    keyMenu->Append(ID_KEY_APL_DOT, wxT("Apple .\tCtrl-Alt-,"), wxT("Apple + ."));
 
-    keyMenu->Append(ID_KEY_APL_S, wxT("Apple S"), wxT("Apple + S"));
-    keyMenu->Append(ID_KEY_APL_ENTER, wxT("Apple Enter"), wxT("Apple + Enter"));
-    keyMenu->Append(ID_KEY_APL_RENTER, wxT("Apple Right Enter"), wxT("Apple + Numpad Enter"));
+    keyMenu->Append(ID_KEY_APL_S, wxT("Apple S"), wxT("Apple + S")); // reachable live via Cmd-S (Apple-key passthrough)
+    keyMenu->Append(ID_KEY_APL_ENTER, wxT("Apple Enter\tCtrl-Alt-Return"), wxT("Apple + Enter"));
+    keyMenu->Append(ID_KEY_APL_RENTER, wxT("Apple Right Enter\tCtrl-Alt-Shift-Return"), wxT("Apple + Numpad Enter"));
 
-    keyMenu->Append(ID_KEY_APL_1, wxT("Apple 1"), wxT("Apple + 1"));
-    keyMenu->Append(ID_KEY_APL_2, wxT("Apple 2"), wxT("Apple + 2"));
-    keyMenu->Append(ID_KEY_APL_3, wxT("Apple 3"), wxT("Apple + 3"));
+    keyMenu->Append(ID_KEY_APL_1, wxT("Apple 1\tCtrl-Alt-1"), wxT("Apple + 1"));
+    keyMenu->Append(ID_KEY_APL_2, wxT("Apple 2\tCtrl-Alt-2"), wxT("Apple + 2"));
+    keyMenu->Append(ID_KEY_APL_3, wxT("Apple 3\tCtrl-Alt-3"), wxT("Apple + 3"));
 
-    keyMenu->Append(ID_KEY_OPT_0, wxT("Option 0"), wxT("Option 0"));
-    keyMenu->Append(ID_KEY_OPT_4, wxT("Option 4"), wxT("Option 4"));
-    keyMenu->Append(ID_KEY_OPT_7, wxT("Option 7"), wxT("Option 7"));
+    keyMenu->Append(ID_KEY_OPT_0, wxT("Option 0\tCtrl-Alt-0"), wxT("Option 0"));
+    keyMenu->Append(ID_KEY_OPT_4, wxT("Option 4\tCtrl-Alt-4"), wxT("Option 4"));
+    keyMenu->Append(ID_KEY_OPT_7, wxT("Option 7\tCtrl-Alt-7"), wxT("Option 7"));
 
     keyMenu->AppendSeparator();
     keyMenu->Append(ID_KEY_WD2501, wxT("w(0,2501)unix"), wxT("boot UniPlus from hard drive"));
@@ -9177,11 +9167,11 @@ LisaEmFrame::LisaEmFrame(const wxString& title)
     fileMenu->Append(wxID_PREFERENCES, wxT("Preferences"), wxT("Configure this Lisa"));
 
     fileMenu->AppendSeparator();
-    fileMenu->AppendCheckItem(ID_PAUSE, wxT("Pause"), wxT("Pause Emulation\tCtrl-."));
+    fileMenu->AppendCheckItem(ID_PAUSE, wxT("Pause\tCtrl-Alt-."), wxT("Pause Emulation"));
     fileMenu->AppendSeparator();
 
-    fileMenu->Append(ID_FLOPPY, wxT("Insert diskette"), wxT("Insert a disk image\tCtrl-O"));
-    fileMenu->Append(ID_NewFLOPPY, wxT("Insert blank diskette"), wxT("Create, and insert, a blank disk image\tCtrl-N"));
+    fileMenu->Append(ID_FLOPPY, wxT("Insert diskette\tCtrl-Alt-O"), wxT("Insert a disk image"));
+    fileMenu->Append(ID_NewFLOPPY, wxT("Insert blank diskette\tCtrl-Alt-N"), wxT("Create, and insert, a blank disk image"));
     fileMenu->AppendSeparator();
     fileMenu->Append(ID_PROFILE_NEW, wxT("Create new Profile image"), wxT("Creates a blank ProFile storage file"));
     fileMenu->AppendSeparator();
@@ -9191,12 +9181,12 @@ LisaEmFrame::LisaEmFrame(const wxString& title)
     fileMenu->AppendSeparator();
 #endif
     fileMenu->Append(ID_SCREENSHOT, wxT("Screenshot"), wxT("Save the current screen as an image"));
-    fileMenu->Append(ID_SCREENSHOT_FULL, wxT("Full Screenshot"), wxT("Save a screenshot along with the skin\tCtrl-S"));
+    fileMenu->Append(ID_SCREENSHOT_FULL, wxT("Full Screenshot\tCtrl-Alt-Shift-S"), wxT("Save a screenshot along with the skin"));
     fileMenu->Append(ID_SCREENSHOT_RAW, wxT("Raw Screenshot"), wxT("Save a raw screenshot"));
 
     fileMenu->AppendSeparator();
 
-    fileMenu->Append(ID_FUSH_PRNT, wxT("Flush Print Jobs"), wxT("Force pending print jobs to print\tCtrl-P"));
+    fileMenu->Append(ID_FUSH_PRNT, wxT("Flush Print Jobs\tCtrl-Alt-F"), wxT("Force pending print jobs to print"));
 
     fileMenu->AppendSeparator();
 

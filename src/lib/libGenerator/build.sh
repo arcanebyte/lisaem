@@ -312,6 +312,11 @@ then
   cd ${XTLD}/cpu68k
   echo -n "  "
   ../obj/def68k || exit 1
+  # def68k writes ../include/def68k-*.h, but gen68k.c includes "def68k-iibs.h"
+  # from here, where committed copies are kept for the CHECKFILES check. Copy
+  # the new tables over them, or gen68k generates code from stale tables that
+  # the decoder (generator/cpu68k.c, which reads ../include) no longer matches.
+  cp ../include/def68k-iibs.h ../include/def68k-funcs.h ../include/def68k-proto.h . || exit 1
 
   echo "  Compiled gen68k.c..."
   $CC $ZARCH $CLICMD  $WITHDEBUG $WITHTRACE -c gen68k.c -o ../obj/gen68k.o $CFLAGS $INC  || exit 1

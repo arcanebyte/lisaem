@@ -615,6 +615,7 @@ void generate(FILE *o, int topnibble)
                     OUT("ERROR\n");
                     break;
                 }
+                OUT("  SR &= 0xA71F; /* the SR bits a 68000 has */\n");
                 ABORT_CHECK(o);                                // added since this opcode doesn't call eastore
                 OUT("  if (sr != SFLAG) {SR_CHANGE()};\n");    // RA20050407
                 OUT("  if (oim>IMASK)   {IRQMASKLOWER();}\n"); // RA20050411
@@ -1163,7 +1164,16 @@ void generate(FILE *o, int topnibble)
                     OUT("  SR = (SR & ~0xFF) | srcdata;\n");
                     break;
                 case sz_word:
-
+                    if ((iib->bits & 0x0200) == 0)
+                    {
+                        /* MOVE <ea>,CCR ($44C0): a word-sized operand of which the
+                           CCR takes the low five bits. It was defined as a byte,
+                           which from memory fetched the high byte -- the SR's
+                           system byte -- so the flags were lost. */
+                        ABORT_CHECK(o);
+                        OUT("  SR = (SR & ~0xFF) | (srcdata & 0x1F);\n");
+                        break;
+                    }
                     OUT("  if (!SFLAG)\n");
                     fprintf(o, "    {reg68k_internal_vector(V_PRIVILEGE, PC+%d,0);return;}\n",
                             (iib->wordlen) * 2);
@@ -1171,7 +1181,7 @@ void generate(FILE *o, int topnibble)
 
                     OUT("\n");
                     ABORT_CHECK(o); // added since this opcode doesn't call eastore
-                    OUT("  SR = srcdata;\n");
+                    OUT("  SR = srcdata & 0xA71F; /* the SR bits a 68000 has */\n");
                     break;
                 default:
                     OUT("ERROR size\n");
@@ -1986,7 +1996,7 @@ void generate(FILE *o, int topnibble)
 
                 OUT("  ADDRREG(7)+= 6;\n"); // fix stack
 
-                OUT("  SR = w1;\n");
+                OUT("  SR = w1 & 0xA71F; /* the SR bits a 68000 has */\n");
 
                 // OUT("  FV = fetchword(ADDRREG(7)+6);   // added by RA for format/vector word\n");  // not applicable to 68000
                 // OUT("  ADDRREG(7)+= 8;                 // \n\n");
@@ -2041,7 +2051,7 @@ void generate(FILE *o, int topnibble)
                 OUT("l1=fetchlong(ADDRREG(7)+2);");
                 ABORT_CHECK(o);
 
-                OUT("  SR = (SR & ~0xFF) | (w1 & 0xFF);\n");
+                OUT("  SR = (SR & ~0xFF) | (w1 & 0x1F); /* RTR restores five CCR bits */\n");
                 OUT("  PC = l1;\n");
                 OUT("  ADDRREG(7)+= 6;\n");
 

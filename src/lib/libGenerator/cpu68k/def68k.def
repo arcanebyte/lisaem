@@ -116,7 +116,7 @@
 0100 0100 zz eee EEE	0 0	-----	XNZVC	NEG.z      e(*,-Areg,-Imm,-PC)
 0100 0110 zz eee EEE	0 0	-----	-NZ00	NOT.z      e(*,-Areg,-Imm,-PC)
 0100 0000 11 eee EEE	0 0	XNZVC	-----	MOVEFSR.W  e(*,-Areg,-Imm,-PC)
-0100 0100 11 eee EEE	0 0	-----	XNZVC	MOVETSR.B  e(*,-Areg)
+0100 0100 11 eee EEE	0 0	-----	XNZVC	MOVETSR.W  e(*,-Areg)
 0100 0110 11 eee EEE	1 0	-----	XNZVC	MOVETSR.W  e(*,-Areg)
 
 0100 1000 00 eee EEE	0 0	X----	XNZVC	NBCD.B     e(*,-Areg,-Imm,-PC)

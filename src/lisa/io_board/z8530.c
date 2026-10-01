@@ -1786,7 +1786,12 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
       scc_r[port].s.rr0.r.cts = get_cts(port);
       scc_r[port].s.rr0.r.break_abort = get_break(port);
       scc_r[port].s.rr0.r.sync_hunt = 0;
-      scc_r[port].s.rr0.r.tx_underrun_eom = (!scc_w[port].s.wr5.r.txenable);
+      // Tx Underrun/EOM is a latch: "Reset Tx Underrun/EOM" (WR0 $C0) clears it
+      // and the chip sets it when the transmitter runs out of data. Bytes here
+      // leave at once, so an empty buffer is an underrun. MacWorks Plus II's
+      // LocalTalk send resets it after a frame and spins at IPL 6 until it sets.
+      if (!scc_w[port].s.wr5.r.txenable || fliflo_buff_is_empty(&SCC_WRITE[port]))
+        scc_r[port].s.rr0.r.tx_underrun_eom = 1;
       scc_r[port].s.rr0.r.zero_count = 0;
       
       // sync hunt fakeout

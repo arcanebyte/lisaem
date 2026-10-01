@@ -2138,7 +2138,7 @@ void generate(FILE *o, int topnibble)
             case i_DBcc:
                 GENDBG("");
                 /* special case where ipc holds the already PC-relative value */
-                fprintf(o, "  uint32 srcdata = ipc->src;\n");
+                fprintf(o, "  uint32 srcdata = ipc->src + (reg68k_pc & 0xff000000); /* branch target with the PC's high byte */\n");
                 generate_ea(o, iib, tp_dst, 1);
                 generate_eaval(o, iib, tp_dst);
                 generate_cc(o, iib);
@@ -2165,7 +2165,7 @@ void generate(FILE *o, int topnibble)
             case i_DBRA:
                 GENDBG("");
                 /* special case where ipc holds the already PC-relative value */
-                fprintf(o, "  uint32 srcdata = ipc->src;\n");
+                fprintf(o, "  uint32 srcdata = ipc->src + (reg68k_pc & 0xff000000); /* branch target with the PC's high byte */\n");
                 generate_ea(o, iib, tp_dst, 1);
                 generate_eaval(o, iib, tp_dst);
 
@@ -2189,7 +2189,7 @@ void generate(FILE *o, int topnibble)
             case i_Bcc: // the -8's are reminders that the base case takes 8 cycles -  // RA2005.05.09
                 GENDBG("");
                 /* special case where ipc holds the already PC-relative value */
-                OUT("  uint32 srcdata = ipc->src;\n");
+                OUT("  uint32 srcdata = ipc->src + (reg68k_pc & 0xff000000); /* branch target with the PC's high byte */\n");
                 generate_cc(o, iib);
                 OUT("\n");
                 OUT("  uint32 oldpc=PC;\n");
@@ -2224,7 +2224,7 @@ void generate(FILE *o, int topnibble)
             case i_BSR:
                 GENDBG("");
                 /* special case where ipc holds the already PC-relative value */
-                OUT("  uint32 srcdata = ipc->src;\n");
+                OUT("  uint32 srcdata = ipc->src + (reg68k_pc & 0xff000000); /* branch target with the PC's high byte */\n");
                 OUT("\n");
                 if (DEBUG_BRANCH)
                     fputs("  printf(\"BSR: 0x%X\\n\", PC);\n", o);
@@ -2643,20 +2643,30 @@ void generate_ea(FILE *o, t_iib *iib, t_type type, int update)
             break;
         case dt_AbsW:
         case dt_AbsL:
-        case dt_Pdis:
             if (type == tp_src)
                 fprintf(o, "  uint32 srcaddr = ipc->src;\n");
             else
                 fprintf(o, "  uint32 dstaddr = ipc->dst;\n");
             break;
+        /* PC-relative: ipc->src/dst was worked out when the instruction was
+           decoded, from its 24-bit address, and the decoded instruction is
+           shared by every PC that reaches it. A 68000's PC keeps all 32 bits
+           (Mac code runs at $A0xxxxxx-style addresses from flagged handles),
+           so add the high byte of the PC it is running at. */
+        case dt_Pdis:
+            if (type == tp_src)
+                fprintf(o, "  uint32 srcaddr = ipc->src + (reg68k_pc & 0xff000000);\n");
+            else
+                fprintf(o, "  uint32 dstaddr = ipc->dst + (reg68k_pc & 0xff000000);\n");
+            break;
         case dt_Pidx:
             if (type == tp_src)
             {
-                fprintf(o, "  uint32 srcaddr = idxval_src(ipc);\n");
+                fprintf(o, "  uint32 srcaddr = idxval_src(ipc) + (reg68k_pc & 0xff000000);\n");
             }
             else
             {
-                fprintf(o, "  uint32 dstaddr = idxval_dst(ipc);\n");
+                fprintf(o, "  uint32 dstaddr = idxval_dst(ipc) + (reg68k_pc & 0xff000000);\n");
             }
             break;
         case dt_ImmB:

@@ -509,6 +509,11 @@ void flag_via_t1_irq(int i)
     rate = (latch ? ((cpu68k_clocks - V->t1_set_cpuclk) / latch) : 0);
 
     V->t1_e = -1;
+    if (i == 2)
+    {
+        extern void profile_trace(const char *fmt, ...); // TEMPORARY
+        profile_trace("via2 T1 EXPIRED -> IFR T1 set, latch %04x ACR %02x IER %02x IFR before %02x", latch, V->via[ACR], V->via[IER], V->via[IFR]); // TEMPORARY
+    }
     V->via[IFR] |= VIA_IRQ_BIT_T1;
     if (V->via[IER] & VIA_IRQ_BIT_T1)
     {
@@ -708,7 +713,13 @@ void get_next_timer_event(void)
                 if (timer_event_mid_opcode)
                     cpu68k_clocks_stop = cpu68k_clocks;
                 else
+                {
+                    extern void trace_slot_autovector(int avno, const char *source); // TEMPORARY
+                    char src[64];
+                    snprintf(src, sizeof(src), "get_next_timer_event via%d", i); // TEMPORARY
+                    trace_slot_autovector(via[i].irqnum, src);                  // TEMPORARY
                     reg68k_external_autovector(via[i].irqnum); // 2021.03.21 fire interrupt if IFR set to enabled bits
+                }
             }
         }
 

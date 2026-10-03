@@ -231,8 +231,10 @@ void dump_cops(FILE *buglog) { my_dump_cops(buglog); }
     set_kb_data_ready();                                                           \
     DEBUG_LOG(0, "COPS queue len: %d adding 0x%02x", copsqueuelen, (unsigned)(x)); \
     if (copsqueuelen >= 0 && (copsqueuelen + 1 < MAXCOPSQUEUE))                    \
+    {                                                                              \
       copsqueue[copsqueuelen] = (x);                                               \
-    copsqueuelen++;                                                                \
+      copsqueuelen++;                                                              \
+    }                                                                              \
   }
 
 #define cops_reset_status(x)                                              \
@@ -240,8 +242,10 @@ void dump_cops(FILE *buglog) { my_dump_cops(buglog); }
     set_kb_data_ready();                                                  \
     DEBUG_LOG(0, "COPS queue len: %d adding reset (0x80)", copsqueuelen); \
     if (copsqueuelen >= 0 && (copsqueuelen + 1 < MAXCOPSQUEUE))           \
+    {                                                                     \
       copsqueue[copsqueuelen] = 0x80;                                     \
-    copsqueuelen++;                                                       \
+      copsqueuelen++;                                                     \
+    }                                                                     \
   }
 #define SEND_RESETCOPS_AND_CODE(x)                                                           \
   {                                                                                          \

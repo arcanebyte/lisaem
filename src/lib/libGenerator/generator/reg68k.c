@@ -921,6 +921,191 @@ static void cpu_trace_watch_check(uint32 pc)
   }
 }
 
+/* LISAEM_CPU_CHECK=<lo>-<hi>[,<seconds>] (hex PCs): run every instruction whose PC
+ * is in that range on Musashi as well (src/lib/musashi/cpucheck.c), after the
+ * given seconds of host time, and log where the two cores disagree: registers,
+ * PC, SR (condition codes only where Generator computed them: it skips flags
+ * that nothing reads) and memory writes. Instructions that touch anything but
+ * RAM are skipped, as are F-line traps (LisaEm's HLE), STOP and RESET. The log
+ * goes to LISAEM_CPU_CHECK_LOG, else stderr: the first 60 disagreements, and a
+ * count every 10 s.
+ */
+#include "../../musashi/cpucheck.h"
+
+static int cc_enabled = -1, cc_active = 0;
+static uint32 cc_lo, cc_hi;
+static time_t cc_after_at, cc_stat_at;
+static FILE *cc_log;
+static cc_regs cc_in, cc_mus;
+static t_ipc *cc_ipc;
+static unsigned long cc_checked, cc_skipped, cc_bad;
+
+int cc_mem_read(unsigned addr, unsigned *val)
+{
+  mmu_trans_t *t = &mmu_trans[(addr & MMUEPAGEFL) >> 9];
+  int32 p;
+  if (t->readfn != ram && t->readfn != vidram)
+    return -1;
+  p = (int32)(addr & ADDRESSFILT) + t->address;
+  if (p < (int32)minlisaram || p >= (int32)maxlisaram)
+    return -1;
+  *val = lisaram[p];
+  return 0;
+}
+
+int cc_writable(unsigned addr, int size)
+{
+  for (int k = 0; k < size; k++)
+  {
+    mmu_trans_t *t = &mmu_trans[((addr + k) & MMUEPAGEFL) >> 9];
+    if (t->writefn != ram && t->writefn != vidram)
+      return -1;
+  }
+  return 0;
+}
+
+static void cc_get(cc_regs *r, uint32 pc)
+{
+  for (int i = 0; i < 8; i++)
+  {
+    r->d[i] = reg68k_regs[i];
+    r->a[i] = reg68k_regs[8 + i];
+  }
+  r->sr = reg68k_sr.sr_int;
+  r->pc = pc;                        /* all 32 bits: a 68000 stacks the whole PC */
+  r->osp = regs.sp;
+}
+
+static void cpucheck_pre(t_ipc *ipc, uint32 pc)
+{
+  cc_active = 0;
+  if (cc_enabled < 0)
+  {
+    const char *e = getenv("LISAEM_CPU_CHECK"), *l = getenv("LISAEM_CPU_CHECK_LOG");
+    unsigned long lo, hi;
+    int secs = 0;
+    cc_enabled = (e != NULL && sscanf(e, "%lx-%lx,%d", &lo, &hi, &secs) >= 2);
+    if (!cc_enabled)
+      return;
+    cc_lo = lo;
+    cc_hi = hi;
+    cc_after_at = secs > 0 ? time(NULL) + secs : 0;
+    cc_log = (l && *l) ? fopen(l, "w") : NULL;
+    if (!cc_log)
+      cc_log = stderr;
+    fprintf(cc_log, "LISAEM_CPU_CHECK %06lx-%06lx after %d s\n", lo, hi, secs);
+    fflush(cc_log);
+    cc_init();
+  }
+  if (!cc_enabled)
+    return;
+  pc &= 0xffffff;
+  if (pc < cc_lo || pc > cc_hi)
+    return;
+  if (cc_after_at && time(NULL) < cc_after_at)
+    return;
+  if ((ipc->opcode & 0xf000) == 0xf000 || ipc->opcode == 0x4e72 || ipc->opcode == 0x4e70)
+    return;
+  cc_get(&cc_in, reg68k_pc);
+  if (cc_step(&cc_in, &cc_mus))
+  {
+    cc_skipped++;
+    return;
+  }
+  cc_ipc = ipc;
+  cc_active = 1;
+}
+
+static void cc_dump(const char *tag, const cc_regs *r)
+{
+  fprintf(cc_log, "  %-8s pc=%06x sr=%04x osp=%08x\n           d=", tag, r->pc & 0xffffff, r->sr, r->osp);
+  for (int i = 0; i < 8; i++)
+    fprintf(cc_log, "%08x%c", r->d[i], i < 7 ? ',' : '\n');
+  fprintf(cc_log, "           a=");
+  for (int i = 0; i < 8; i++)
+    fprintf(cc_log, "%08x%c", r->a[i], i < 7 ? ',' : '\n');
+}
+
+static void cpucheck_post(void)
+{
+  cc_regs gen;
+  char why[256] = "";
+  int n = 0;
+
+  if (!cc_active)
+    return;
+  cc_active = 0;
+  if (abort_opcode)                  /* Generator took a bus/address error mid-instruction */
+  {
+    cc_skipped++;
+    return;
+  }
+  cc_get(&gen, reg68k_pc);
+  cc_checked++;
+
+  /* condition codes: those the instruction does not touch must agree; those it
+     sets only if Generator kept them (ipc->set != 0 selects the flag-computing
+     version of the instruction) */
+  t_iib *iib = cpu68k_iibtable[cc_ipc->opcode];
+  unsigned fs = iib ? iib->flags.set : 0, ccrset = 0;
+  if (fs & IIB_FLAG_X) ccrset |= 0x10;
+  if (fs & IIB_FLAG_N) ccrset |= 0x08;
+  if (fs & IIB_FLAG_Z) ccrset |= 0x04;
+  if (fs & IIB_FLAG_V) ccrset |= 0x02;
+  if (fs & IIB_FLAG_C) ccrset |= 0x01;
+  unsigned srmask = 0xa71f;           /* the SR bits a 68000 has (T, S, I2-I0, XNZVC) */
+  if (!cc_ipc->set)
+    srmask &= ~ccrset;
+
+  for (int i = 0; i < 8; i++)
+  {
+    if (gen.d[i] != cc_mus.d[i])
+      n += snprintf(why + n, sizeof(why) - n, " D%d", i);
+    if (gen.a[i] != cc_mus.a[i])
+      n += snprintf(why + n, sizeof(why) - n, " A%d", i);
+  }
+  if (gen.pc != cc_mus.pc)
+    n += snprintf(why + n, sizeof(why) - n, " PC");
+  if ((gen.sr & srmask) != (cc_mus.sr & srmask))
+    n += snprintf(why + n, sizeof(why) - n, " SR(mask %04x)", srmask);
+  if (gen.osp != cc_mus.osp)
+    n += snprintf(why + n, sizeof(why) - n, " otherSP");
+  for (int i = 0; i < cc_nwrites; i++)
+  {
+    uint32 v = 0, a = cc_writes[i].addr;
+    for (int k = 0; k < cc_writes[i].size; k++)
+    {
+      unsigned b;
+      if (cc_mem_read(a + k, &b) != 0)
+        b = 0;
+      v = (v << 8) | b;
+    }
+    if (v != cc_writes[i].val && n < (int)sizeof(why) - 40)
+      n += snprintf(why + n, sizeof(why) - n, " mem[%06x].%d=%x(musashi %x)", a, cc_writes[i].size, v, cc_writes[i].val);
+  }
+
+  if (n)
+  {
+    cc_bad++;
+    if (cc_bad <= 60)
+    {
+      char dis[128];
+      cc_disasm(cc_in.pc, dis);
+      fprintf(cc_log, "MISMATCH #%lu at %06x %04x  %s:%s  (ipc set %x)\n", cc_bad, cc_in.pc, cc_ipc->opcode, dis, why, cc_ipc->set);
+      cc_dump("before", &cc_in);
+      cc_dump("lisaem", &gen);
+      cc_dump("musashi", &cc_mus);
+      fflush(cc_log);
+    }
+  }
+  if (time(NULL) - cc_stat_at >= 10)
+  {
+    cc_stat_at = time(NULL);
+    fprintf(cc_log, "LISAEM_CPU_CHECK: %lu checked, %lu skipped, %lu mismatches\n", cc_checked, cc_skipped, cc_bad);
+    fflush(cc_log);
+  }
+}
+
 static void cpu_trace(t_ipc *ipc, uint32 pc)
 {
   if (cpu_trace_state < 0)
@@ -2596,7 +2781,9 @@ int32 reg68k_external_execute(int32 clocks)
 #endif
           if (cpu_trace_state != 0)
             cpu_trace(ipc, pc24);
+          cpucheck_pre(ipc, pc24);
           ipc->function(ipc);
+          cpucheck_post();
 #ifdef CHECK_HIGH_BYTE_PRESERVE
           if ((opc & 0xff000000) != 0 && (reg68k_pc & 0xff000000) == 0)
           {

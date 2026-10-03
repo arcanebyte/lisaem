@@ -43,3 +43,24 @@ the current context. The file is flushed every 1024 lines and on every
 
 After changing `reg68k.c`, run `./build.sh clean` before `./build.sh
 build`, which does not rebuild libGenerator on its own.
+
+## CPU cross-check
+
+`LISAEM_CPU_CHECK=<lo>-<hi>[,<seconds>]` (hex PCs) runs every instruction
+whose PC is in that range on a second 68000 core as well, Musashi 4.60
+(kstenerud/Musashi 313ebf1, MIT licence, in `src/lib/musashi`), starting
+from LisaEm's registers and memory, and logs where the two disagree:
+registers, PC, SR and memory writes. With `<seconds>`, checking starts that
+many seconds of host time after start.
+
+- Condition codes an instruction sets are compared only where Generator
+  computed them (it skips flags that nothing reads).
+- Instructions that touch anything but RAM are skipped, as are F-line
+  traps (LisaEm's HLE), `STOP` and `RESET`.
+- The log goes to `LISAEM_CPU_CHECK_LOG=<file>`, else stderr: the first 60
+  disagreements, each with the registers before and after on both cores,
+  and a count every 10 seconds.
+
+`cpucheck.c` sits between `reg68k.c` and Musashi. When the check is off,
+the cost on the execution path is a few tests of static variables around
+each instruction.

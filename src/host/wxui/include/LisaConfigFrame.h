@@ -47,6 +47,7 @@ public:
     void OnSavePram(wxCommandEvent &event);
     void OnLoadPram(wxCommandEvent &event);
     void OnSernoInfo(wxCommandEvent &event);
+    void check_serial_checksum(void);              // offer to fix a serial # whose checksum is wrong
     void OnNoteBook(wxNotebookEvent &event);
     void OnPickRom(wxCommandEvent &event);
     void OnPickDRom(wxCommandEvent &event);

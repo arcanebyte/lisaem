@@ -3336,6 +3336,36 @@ void reg68k_internal_vector(int vno, uint32 oldpc, uint32 addr_error)
     if (line15_hle_intercept())
       return;
   }
+  if (vno == V_LINE10)
+  {
+    /* LISAEM_TRAPLOG=lo-hi (hex A-line trap words): each trap in that range
+       and the place it was called from, once each, as for a program calling
+       a trap the system has not got */
+    static int tl = -1, tn = 0;
+    static unsigned lo, hi;
+    static uint32 tseen[512];
+    if (tl < 0)
+    {
+      const char *e = getenv("LISAEM_TRAPLOG");
+      tl = e && sscanf(e, "%x-%x", &lo, &hi) == 2;
+    }
+    if (tl)
+    {
+      unsigned w = lisa_ram_safe_getword(context, oldpc);
+      if (w >= lo && w <= hi)
+      {
+        uint32 key = (w << 16) ^ (oldpc & 0xffffff);
+        int i;
+        for (i = 0; i < tn && tseen[i] != key; i++)
+          ;
+        if (i == tn && tn < 512)
+        {
+          tseen[tn++] = key;
+          fprintf(stderr, "TRAPLOG: %04x from %06lx\n", w, (long)(oldpc & 0xffffff));
+        }
+      }
+    }
+  }
   if (vno == 2 && reg68k_pc == 0x0002001c && addr_error == 0x00400000 && macworks4mb)
   {
     enable_4MB_macworks();

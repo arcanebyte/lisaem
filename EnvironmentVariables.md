@@ -18,6 +18,13 @@ guest. All are off unless set.
 
 Times are host time, counted from when LisaEm starts.
 
+## Logs
+
+| Variable | Effect |
+|---|---|
+| `LISAEM_TRAPLOG=<lo>-<hi>` | Hex A-line trap words: each trap in that range and the address it was called from is logged to stderr as `TRAPLOG: <trap> from <pc>`, once for each pair (up to 512). |
+| `LISAEM_T2LOG=1` | Every 2 seconds of emulated time, VIA2's Timer 2: how many times it fired, was started (T2CH written) and read, the smallest and largest counts it was started with and how many were zero, and VIA2's IFR and IER, as a `T2LOG:` line on stderr. |
+
 ## CPU trace
 
 `cpu_trace()` in `src/lib/libGenerator/generator/reg68k.c` logs each

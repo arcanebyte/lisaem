@@ -1810,8 +1810,9 @@ extern "C"  void dumpallscreenshot(void)
 #endif
 
 // LISAEM_SCREEN_DUMP=<file.png>: about once a second of host time, save the
-// Lisa's display (720x364, one bit per pixel, read from video RAM) to that
-// file, so a script can see the screen without a window capture. The file
+// Lisa's display (720x364, or 608x431 with the 3A ROM's XL screen; one bit
+// per pixel, read from video RAM) to that file, so a script can see the
+// screen without a window capture. The file
 // is written under a temporary name and renamed, so readers never see a
 // partial file.
 static void screen_dump_if_due(void)
@@ -1835,7 +1836,7 @@ static void screen_dump_if_due(void)
       return;
     last = now;
 
-    const int w = 720, h = 364, bytes_per_row = 90;
+    const int w = lisa_vid_size_x, h = lisa_vid_size_y, bytes_per_row = lisa_vid_size_xbytes;
     wxImage image(w, h, false);
     for (int y = 0; y < h; y++)
       for (int x = 0; x < w; x++)

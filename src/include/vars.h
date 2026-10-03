@@ -915,6 +915,7 @@ typedef struct
   // #ifdef DEBUG
   XTIMER t1_set_cpuclk;
   XTIMER t2_set_cpuclk;
+  uint16 t2_start;      // T2's count when T2CH was written (via_t2_count)
   XTIMER t1_fired_cpuclk;
   XTIMER t2_fired_cpuclk;
   // #endif

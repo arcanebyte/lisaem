@@ -236,15 +236,16 @@ inline static XTIMER get_via_timer_left_or_passed_from_te(XTIMER t_e, XTIMER tim
     return 0;
 }
 
-// T2's count as a 6522 reads it: loaded from the latches when T2CH was
-// written (t2_set_cpuclk), one less each VIA clock since, and on past zero
-// (the flag is set once at zero; the count wraps and keeps going). Code that
-// reads T2 late to see how long has passed, as a time manager may, needs
-// this after the timer has run out too.
+// T2's count as a 6522 reads it: the count loaded when T2CH was written
+// (t2_start, at t2_set_cpuclk), one less each VIA clock since, and on past
+// zero (the flag is set once at zero; the count wraps and keeps going). Code
+// that reads T2 late to see how long has passed, as a time manager may,
+// needs this after the timer has run out too. A later write to the low
+// latch (T2CL) waits for the next T2CH write, as on a 6522.
 inline static uint16 via_t2_count(viatype *V)
 {
     XTIMER elapsed = CPUCLK_TO_VIACLK(cpu68k_clocks - V->t2_set_cpuclk);
-    return (uint16)(((V->via[T2LH] << 8) | V->via[T2LL]) - elapsed);
+    return (uint16)(V->t2_start - elapsed);
 }
 
 inline static XTIMER get_via_te_from_timer(uint16 timer)
@@ -1508,6 +1509,7 @@ void lisa_wb_Oxdc00_cops_via1(uint32 addr, uint8 xvalue)
         via[1].t2_e = get_via_te_from_timer((via[1].via[T2LH] << 8) | via[1].via[T2CL]); // set timer expiration
         FIX_CLKSTOP_VIA_T2(1);                                                           // update cpu68k_clocks_stop if needed
         via[1].t2_set_cpuclk = cpu68k_clocks;                                            // timer was set right now (at this clock)
+        via[1].t2_start = (via[1].via[T2LH] << 8) | via[1].via[T2CL];                   // the count it started from
 
         DEBUG_LOG(0, "t2clk:%d T2 set to expire at CPU clock:%llx time now is %llx which is %llx cycles from now",
                   ((via[1].via[T2LH] << 8) | via[1].via[T2CL]), via[1].t2_e, cpu68k_clocks, via[1].t2_e - cpu68k_clocks);
@@ -2163,6 +2165,7 @@ void lisa_wb_Oxd800_par_via2(uint32 addr, uint8 xvalue)
         }
         FIX_CLKSTOP_VIA_T2(2);                // update cpu68k_clocks_stop if needed
         via[2].t2_set_cpuclk = cpu68k_clocks; // timer was set right now (at this clock)
+        via[2].t2_start = (via[2].via[T2CH] << 8) | via[2].via[T2CL]; // the count it started from
 
         DEBUG_LOG(0, "t2clk:%d T2 set to expire at CPU clock:%llx time now is %llx which is %llx cycles from now.  stop is:%llx",
                   ((via[2].via[T2LH] << 8) | via[2].via[T2CL]), via[2].t2_e, cpu68k_clocks, via[2].t2_e - cpu68k_clocks, cpu68k_clocks_stop);
@@ -3377,6 +3380,7 @@ void lisa_wb_ext_2par_via(ViaType *V, uint32 addr, uint8 xvalue)
         DEBUG_LOG(0, "V->t2_e=%ld", V->t2_e);
         FIX_CLKSTOP_VIA_T2(2);            // update cpu68k_clocks_stop if needed
         V->t2_set_cpuclk = cpu68k_clocks; // timer was set right now (at this clock)
+        V->t2_start = (V->via[T2CH] << 8) | V->via[T2CL]; // the count it started from
 
         DEBUG_LOG(0, "t2clk:%d T2 set to expire at CPU clock:%llx time now is %llx which is %llx cycles from now.  stop is:%llx",
                   ((V->via[T2LH] << 8) | V->via[T2CL]), V->t2_e, cpu68k_clocks, V->t2_e - cpu68k_clocks, cpu68k_clocks_stop);
@@ -3678,6 +3682,7 @@ void init_vias(void)
         // #ifdef DEBUG
         via[i].t1_set_cpuclk = 0;
         via[i].t2_set_cpuclk = 0;
+        via[i].t2_start = 0;
         via[i].t1_fired_cpuclk = 0;
         via[i].t2_fired_cpuclk = 0;
         via[i].last_port = 0xff; // an invalid port number

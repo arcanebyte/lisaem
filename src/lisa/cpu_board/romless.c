@@ -217,6 +217,7 @@ void romless_setvia_and_flopram(int profileboot)
     via[1].sr_fired = (XTIMER)0;
     via[1].t1_set_cpuclk = (XTIMER)4174038;
     via[1].t2_set_cpuclk = (XTIMER)504058877;
+    via[1].t2_start = (via[1].via[T2LH] << 8) | via[1].via[T2LL];
     via[1].t1_fired_cpuclk = (XTIMER)4174166;
     via[1].t2_fired_cpuclk = (XTIMER)504058877;
     via[1].irqnum = 0x02;
@@ -259,6 +260,7 @@ void romless_setvia_and_flopram(int profileboot)
     via[2].sr_fired = (XTIMER)0;
     via[2].t1_set_cpuclk = (XTIMER)949960;
     via[2].t2_set_cpuclk = (XTIMER)0;
+    via[2].t2_start = (via[2].via[T2LH] << 8) | via[2].via[T2LL];
     via[2].t1_fired_cpuclk = (XTIMER)951976;
     via[2].t2_fired_cpuclk = (XTIMER)0;
     via[2].irqnum = 0x01;
@@ -350,6 +352,7 @@ void romless_setvia_and_flopram(int profileboot)
     via[1].sr_fired = (XTIMER)0;
     via[1].t1_set_cpuclk = (XTIMER)4174038;
     via[1].t2_set_cpuclk = (XTIMER)12507185;
+    via[1].t2_start = (via[1].via[T2LH] << 8) | via[1].via[T2LL];
     via[1].t1_fired_cpuclk = (XTIMER)4174166;
     via[1].t2_fired_cpuclk = (XTIMER)12507185;
     via[1].irqnum = 0x02;
@@ -392,6 +395,7 @@ void romless_setvia_and_flopram(int profileboot)
     via[2].sr_fired = (XTIMER)0;
     via[2].t1_set_cpuclk = (XTIMER)949960;
     via[2].t2_set_cpuclk = (XTIMER)0;
+    via[2].t2_start = (via[2].via[T2LH] << 8) | via[2].via[T2LL];
     via[2].t1_fired_cpuclk = (XTIMER)951976;
     via[2].t2_fired_cpuclk = (XTIMER)0;
     via[2].irqnum = 0x01;

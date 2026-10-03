@@ -10617,7 +10617,9 @@ extern "C" void rename_rompath(char *rompath)
     if (!my_lisaconfig)
       return;
 
-    my_lisaconfig->rompath = wxString(rompath, wxConvLocal, 2048); // wxSTRING_MAXLEN);
+    // no length: with one, wxString converts that many bytes, past the end of the
+    // name, and the conversion fails on what follows, leaving the path empty.
+    my_lisaconfig->rompath = wxString(rompath, wxConvLocal);
     my_lisaconfig->Save(pConfig, floppy_ram);
 
     if (my_LisaConfigFrame)

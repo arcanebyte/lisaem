@@ -483,12 +483,33 @@ int16 read_split_rom(char *filename, uint8 *ROMMX)
         *s = 0; // strip off any possible .hi
 
     // You try to pick the lesser of, But evil doesn't come in twos, Whoooo!
-    // note we do assignements inside the if here, because we're super cool like that
-    //                         0123456
+    // Apple part numbers name the halves: 341-0176 (or 341-176) holds the odd bytes
+    // and 341-0175 the even ones; for the 3A ROM, 341-0346 odd and 341-0347 even.
+    // d points at the digit that differs between the two halves.
+    //                       01234567
+    char *d = NULL, oddch = 0, evench = 0;
     if ((s = strstr(infilename, "341-175-")) || (s = strstr(infilename, "341-176-")))
     {
+        d = &s[6];
+        oddch = '6';
+        evench = '5';
+    }
+    else if ((s = strstr(infilename, "341-0175")) || (s = strstr(infilename, "341-0176")))
+    {
+        d = &s[7];
+        oddch = '6';
+        evench = '5';
+    }
+    else if ((s = strstr(infilename, "341-0346")) || (s = strstr(infilename, "341-0347")))
+    {
+        d = &s[7];
+        oddch = '6';
+        evench = '7';
+    }
 
-        s[6] = '5';
+    if (d)
+    {
+        *d = oddch;
         low = fopen(infilename, "rb");
         if (!low)
         {
@@ -498,7 +519,7 @@ int16 read_split_rom(char *filename, uint8 *ROMMX)
         }
         DEBUG_LOG(0, "Opened %s\n", infilename);
 
-        s[6] = '6';
+        *d = evench;
         high = fopen(infilename, "rb");
         if (!high)
         {
@@ -568,6 +589,17 @@ int16 read_split_rom(char *filename, uint8 *ROMMX)
     free(ROMHI);
     free(ROMLO);
 
+    // a Lisa boot ROM starts with its initial SSP, 00000480; anything else is
+    // the halves the wrong way around, or not a boot ROM, so don't save it.
+    if (ROMMX[0] != 0x00 ||
+        ROMMX[1] != 0x00 ||
+        ROMMX[2] != 0x04 ||
+        ROMMX[3] != 0x80)
+    {
+        ALERT_LOG(0, "Split ROM %s does not start with 00000480, not using it", infilename);
+        return -3;
+    }
+
     // collosal hate arrises
     snprintf(myfilename, 1024, "%s.ROM", infilename);
     out = fopen(myfilename, "wb");
@@ -582,13 +614,7 @@ int16 read_split_rom(char *filename, uint8 *ROMMX)
     // for (a=good; time<9999; see++) {youtu_be("KgaEI08JsiE"); ALERT_LOG(0,"Randy, you're scaring the kids.  Go scream in the closet! lel!");
     DEBUG_LOG(0, "Saved merged rom file as %s\n", myfilename);
 
-    if (ROMMX[0] == 0x00 &&
-        ROMMX[1] == 0x00 &&
-        ROMMX[2] == 0x80 &&
-        ROMMX[3] == 0x04)
-        return 0;
-
-    return -3;
+    return 0;
 }
 
 /**************************************************************************************\

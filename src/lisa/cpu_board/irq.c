@@ -425,6 +425,13 @@ void flag_via_t2_irq(int i)
     V->t2_e = -1;
     V->via[IFR] |= VIA_IRQ_BIT_T2; //  Set the IRQ flag for the VIA
     V->t2_fired++;
+    {
+        extern long t2log_fires;
+        extern void t2log_tick(void);
+        if (i == 2)
+            t2log_fires++;
+        t2log_tick();
+    }
 #ifdef DEBUG
     latch = (V->via[T2CH] << 8) | (V->via[T2CL]);
     rate = (latch ? ((cpu68k_clocks - V->t1_set_cpuclk) / latch) : 0);

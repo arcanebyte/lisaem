@@ -193,6 +193,27 @@ static int crdy_toggle = 0;
 // for speed, but remember to copy them here.  Could turn them into macros, but...
 
 // pass it the via[?].t?_e, get back the timer value (used to read t1/t2)
+// LISAEM_T2LOG: VIA2's T2, every 2 seconds of emulated time: how many
+// times it fired, was started (T2CH) and read, the counts it was started
+// with, and IFR and IER as they are.
+long t2log_fires, t2log_starts, t2log_reads;
+static long t2log_min = 0x10000, t2log_max = -1, t2log_zero;
+void t2log_tick(void)
+{
+    static int on = -1;
+    static XTIMER next = 0;
+    if (on < 0)
+        on = getenv("LISAEM_T2LOG") != NULL;
+    if (!on || cpu68k_clocks < next)
+        return;
+    next = cpu68k_clocks + 10000000;
+    fprintf(stderr, "T2LOG: fired %ld started %ld (counts %ld-%ld, %ld zero) read %ld IFR %02x IER %02x\n",
+            t2log_fires, t2log_starts, t2log_min, t2log_max, t2log_zero, t2log_reads, via[2].via[IFR], via[2].via[IER]);
+    t2log_fires = t2log_starts = t2log_reads = t2log_zero = 0;
+    t2log_min = 0x10000;
+    t2log_max = -1;
+}
+
 inline static XTIMER get_via_timer_left_from_te(XTIMER t_e)
 {
     // int32 diff=(t_e-cpu68k_clocks)/via_clock_diff;
@@ -2123,6 +2144,14 @@ void lisa_wb_Oxd800_par_via2(uint32 addr, uint8 xvalue)
 
         via[2].t2_e = get_via_te_from_timer((via[2].via[T2CH] << 8) | via[2].via[T2CL]); // set timer expiration
         DEBUG_LOG(0, "via[2].t2_e=%ld", via[2].t2_e);
+        {
+            long c = (via[2].via[T2CH] << 8) | via[2].via[T2CL];
+            t2log_starts++;
+            if (c < t2log_min) t2log_min = c;
+            if (c > t2log_max) t2log_max = c;
+            if (!c) t2log_zero++;
+            t2log_tick();
+        }
         FIX_CLKSTOP_VIA_T2(2);                // update cpu68k_clocks_stop if needed
         via[2].t2_set_cpuclk = cpu68k_clocks; // timer was set right now (at this clock)
 
@@ -2512,6 +2541,7 @@ uint8 lisa_rb_Oxd800_par_via2(uint32 addr)
 
     case T2CL2: // Timer 2 Low Byte
         DEBUG_LOG(0, "read T2CL2 t2_e:%ld set at:%ld", via[2].t2_e, via[2].t2_set_cpuclk);
+        t2log_reads++;
 
         via[2].via[T2CL] = get_via_timer_left_or_passed_from_te(via[2].t2_e, via[2].t2_set_cpuclk) & 0xff;
         via[2].last_port = port;

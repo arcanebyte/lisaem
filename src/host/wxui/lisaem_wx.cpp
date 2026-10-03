@@ -1924,6 +1924,91 @@ static void mouse_move_if_due(void)
     seek_mouse_event();
 }
 
+// LISAEM_MOUSE_FILE=<file>: a script appends mouse commands to the file,
+// one per line: "move X Y", "click X Y", "dclick X Y", "down X Y", "up X Y"
+// (screen pixels, 720x364). Commands already in the file at start are
+// skipped, and one step runs every 100 ms. Moves and the button go through
+// add_mouse_event(), as for the host mouse, so a click happens where the
+// pointer arrives. While the file is in use, the host mouse over the window
+// is ignored.
+static int mouse_file_active(void)
+{
+    const char *e = getenv("LISAEM_MOUSE_FILE");
+    return e != NULL && *e != '\0';
+}
+
+static void mouse_file_if_due(void)
+{
+    static int enabled = -1;
+    static char path[1024];
+    static long offset = 0;
+    static wxLongLong last = 0;
+    static char steps[16];   // pending steps: 'm' move, 'd' down, 'u' up, 'h' hold
+    static int nsteps = 0, x = 0, y = 0;
+
+    if (enabled < 0)
+    {
+      enabled = mouse_file_active();
+      if (enabled)
+      {
+        snprintf(path, sizeof(path), "%s", getenv("LISAEM_MOUSE_FILE"));
+        FILE *f = fopen(path, "rb"); // commands already in the file are old: skip them
+        if (f)
+        {
+          fseek(f, 0, SEEK_END);
+          offset = ftell(f);
+          fclose(f);
+        }
+      }
+    }
+    if (!enabled)
+      return;
+
+    wxLongLong now = wxGetLocalTimeMillis();
+    if (now - last < 100)
+      return;
+    last = now;
+
+    if (nsteps == 0)
+    {
+      FILE *f = fopen(path, "rb");
+      if (!f)
+        return;
+      fseek(f, 0, SEEK_END);
+      long size = ftell(f);
+      if (size < offset)
+        offset = 0;
+      char line[128];
+      fseek(f, offset, SEEK_SET);
+      if (size > offset && fgets(line, sizeof(line), f) && strchr(line, '\n'))
+      {
+        offset += strlen(line);
+        char cmd[16];
+        if (sscanf(line, "%15s %d %d", cmd, &x, &y) == 3)
+        {
+          // 'h' holds for one step so the guest sees the button state
+          const char *seq = !strcmp(cmd, "click") ? "mdhu" : !strcmp(cmd, "dclick") ? "mdhudhu" :
+                            !strcmp(cmd, "down") ? "md" : !strcmp(cmd, "up") ? "mu" : "m";
+          // steps run from the end of the array
+          nsteps = strlen(seq);
+          for (int i = 0; i < nsteps; i++)
+            steps[nsteps - 1 - i] = seq[i];
+          fprintf(stderr, "LISAEM_MOUSE_FILE: %s %d %d\n", cmd, x, y);
+        }
+      }
+      fclose(f);
+      if (nsteps == 0)
+        return;
+    }
+
+    char step = steps[--nsteps];
+    if (step != 'h')
+    {
+      add_mouse_event(x, y, step == 'd' ? 1 : step == 'u' ? -1 : 0);
+      seek_mouse_event();
+    }
+}
+
 // LISAEM_FLOPPY_AT=<seconds>,<image>: once, that many seconds of host time
 // after start, insert the disk image into the floppy drive, as the menu's
 // insert command does, without restarting from it (unlike -f).
@@ -2064,6 +2149,7 @@ void LisaEmFrame::Update_Status(long elapsed,long idleentry)
     screen_dump_if_due();
     keyboard_file_if_due();
     mouse_move_if_due();
+    mouse_file_if_due();
     floppy_insert_if_due();
 
 }
@@ -7447,12 +7533,13 @@ void LisaWin::OnMouseMove(wxMouseEvent &event)
           b = -1;
         if (event.LeftDown())
           b = 1;
-        add_mouse_event(x, y, b);
+        if (!mouse_file_active())
+          add_mouse_event(x, y, b);
       }
       seek_mouse_event();
 
       // double click hack  - fixme BUG BUG BUG - fixme - well timing bug, will not be fixed if 32Mhz is allowed
-      if (lu)
+      if (lu && !mouse_file_active())
       {
         if (now - lastup < 1500)
         {

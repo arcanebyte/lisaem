@@ -12,6 +12,7 @@ guest. All are off unless set.
 | `LISAEM_SCREEN_DUMP=<file.png>` | About once a second, the Lisa display (720x364) is saved to the file, written as `<file>.png.tmp` and renamed. |
 | `LISAEM_KEYBOARD_FILE=<file>` | About five times a second, bytes appended to the file are typed on the Lisa keyboard through the Edit/Paste-to-keyboard path. Newline is Return. `^A` followed by a byte B sends B to the COPS as a raw key code (bit 7 set for key down), so a script can hold a key down. If the file shrinks it is read again from the start. |
 | `LISAEM_MOUSE_MOVE_AT=<seconds>` | Once, that many seconds after start, does what moving the pointer onto the Lisa screen does. |
+| `LISAEM_MOUSE_FILE=<file>` | Mouse commands appended to the file, one a line, are carried out: `move X Y`, `click X Y`, `dclick X Y`, `down X Y`, `up X Y`, in Lisa screen pixels (720x364). One step (a move, a button change, or a pause so the guest sees the button held) runs every 100 ms, through the same queue as the host mouse, so a click happens where the pointer arrives. Commands already in the file at start are skipped; if it shrinks it is read again from the start. While it is set, the host mouse over the Lisa screen is ignored. |
 | `LISAEM_FLOPPY_AT=<seconds>,<image>` | Once, that many seconds after start, inserts the DC42 image in the floppy drive, as the menu's insert command does. Unlike `-f`, it does not restart from the floppy. |
 
 Times are host time, counted from when LisaEm starts.

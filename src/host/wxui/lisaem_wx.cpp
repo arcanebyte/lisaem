@@ -8099,7 +8099,9 @@ void update_menu_checkmarks(void)
 
       DisplayMenu->Check(ID_VID_SKINS, !!skins_on);
       DisplayMenu->Check(ID_VID_SKINLESSCENTER, !!skinless_center);
+#ifndef __WXOSX__
       DisplayMenu->Check(ID_VID_MOUSETOPMENU, !!mouse_top_shows_menu_fullscreen);
+#endif
 
       if (!!my_lisaframe)
       {
@@ -9110,7 +9112,9 @@ LisaEmFrame::LisaEmFrame(const wxString& title)
     DisplayMenu->AppendSeparator();
     DisplayMenu->AppendCheckItem(ID_VID_SKINS, wxT("Skin"), wxT("Turn skins on/off"));
     DisplayMenu->AppendCheckItem(ID_VID_SKINLESSCENTER, wxT("Center when skinless"), wxT("Center the display when skins are turned off"));
+#ifndef __WXOSX__
     DisplayMenu->AppendCheckItem(ID_VID_MOUSETOPMENU, wxT("Mouse-to-top reveals menu in fullscreen"), wxT("Moving the mouse to the top edge exits fullscreen to show the menu bar; uncheck if this is triggered unintentionally on a small display"));
+#endif
     DisplayMenu->Append(ID_VID_SKINSELECT, wxT("Change Skin"), wxT("Skin Select"));
     DisplayMenu->AppendSeparator();
 

@@ -554,6 +554,11 @@ export  PHASE1LIST="\
         src/lisa/io_board/z8530-tty       \
         src/lisa/io_board/z8530-shell     \
         src/lisa/io_board/via6522         \
+        src/lib/musashi/m68kcpu           \
+        src/lib/musashi/m68kops           \
+        src/lib/musashi/m68kdasm          \
+        src/lib/musashi/softfloat/softfloat \
+        src/lib/musashi/cpucheck          \
         src/lisa/io_board/etherbox        \
         src/lisa/io_board/etherbox-responder \
         src/lisa/io_board/etherbox-slirp  \

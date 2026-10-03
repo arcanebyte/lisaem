@@ -3517,6 +3517,30 @@ void lisa_addrerror(uint32 addr_error)
 #ifndef CPU_CORE_TESTER
   ALERT_LOG(0, "Odd Address Exception @%08lx PC=%08lx clk:%016llx ", (long)addr_error, (long)reg68k_pc, (long long)cpu68k_clocks);
   DEBUG_LOG(0, "ADDRESS EXCEPTION @%08lx PC=%08lx", (long)addr_error, (long)reg68k_pc);
+  {
+    /* LISAEM_ADDRERR_DUMP=<file>: at the first address error, logical
+       $000000-$1FFFFF in MMU context 1 (as LISAEM_RAM_DUMP writes it) and
+       the registers, so the stack is seen before the error handling writes
+       over it */
+    static int dumped = 0;
+    const char *f = getenv("LISAEM_ADDRERR_DUMP");
+    if (f && !dumped)
+    {
+      FILE *o = fopen(f, "wb");
+      dumped = 1;
+      if (o)
+      {
+        for (uint32 x = 0; x < 2 * 1024 * 1024; x++)
+          fputc(lisaram[((mmu_all[1][(x >> 17) & 0x7f].sor << 9) + (x & 0x1ffff)) & 0x1fffff], o);
+        fclose(o);
+      }
+      fprintf(stderr, "LISAEM_ADDRERR_DUMP: %s; access %08lx PC %08lx context %d D0-D7", f,
+              (long)addr_error, (long)reg68k_pc, (int)context);
+      for (int i = 0; i < 16; i++)
+        fprintf(stderr, "%s %08lx", i == 8 ? " A0-A7" : "", (long)reg68k_regs[i]);
+      fprintf(stderr, " SR %04x\n", reg68k_sr.sr_int);
+    }
+  }
   if (reg68k_pc == lastaddrpc)
     return;
   reg68k_internal_vector(3, reg68k_pc, addr_error);

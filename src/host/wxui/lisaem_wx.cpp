@@ -1843,6 +1843,51 @@ static void screen_dump_if_due(void)
       wxRenameFile(tmp, wxString(path), true);
 }
 
+// LISAEM_RAM_DUMP=<file>: when <file>.req exists, save logical
+// $000000-$1FFFFF as seen through MMU context 1 to <file> and remove
+// <file>.req, so a script can read memory at a moment it chooses, or render
+// a frame buffer the Lisa does not display. Checked about once a second, and
+// only on request: a dump every second stalled the boot ROM's ProFile load.
+static void ram_dump_if_due(void)
+{
+    static wxLongLong last = 0;
+    const char *r = getenv("LISAEM_RAM_DUMP");
+    if (r == NULL || *r == '\0' || !lisaram)
+      return;
+
+    wxLongLong now = wxGetLocalTimeMillis();
+    if (now - last < 1000)
+      return;
+    last = now;
+
+    char req[1100], rtmp[1100];
+    snprintf(req, sizeof(req), "%s.req", r);
+    snprintf(rtmp, sizeof(rtmp), "%s.tmp", r);
+    if (access(req, F_OK) != 0)
+      return;
+    static uint8 buf[0x200000];
+    for (uint32 x = 0; x < 0x200000; x++)
+      buf[x] = lisaram[((mmu_all[1][(x >> 17) & 0x7f].sor << 9) + (x & 0x1ffff)) & 0x1fffff];
+    FILE *f = fopen(rtmp, "wb");
+    if (f)
+    {
+      fwrite(buf, 1, sizeof(buf), f);
+      fclose(f);
+      rename(rtmp, r);
+    }
+    unlink(req);
+    // and where the 68000 is, for a hang a memory image cannot show
+    extern uint32 reg68k_pc;
+    extern uint32 *reg68k_regs;
+    fprintf(stderr, "LISAEM_RAM_DUMP: PC %06lx", (long)(reg68k_pc & 0xffffff));
+    for (int i = 0; i < 16; i++)
+      fprintf(stderr, " %c%d %08lx", i < 8 ? 'D' : 'A', i & 7, (long)reg68k_regs[i]);
+    // and the VIAs' interrupt flags and enables, for an interrupt that
+    // will not clear
+    fprintf(stderr, " VIA1 IFR %02x IER %02x VIA2 IFR %02x IER %02x\n",
+            via[1].via[IFR], via[1].via[IER], via[2].via[IFR], via[2].via[IER]);
+}
+
 // LISAEM_KEYBOARD_FILE=<file>: about five times a second of host time, look
 // for bytes appended to that file since the last look and type them on the
 // Lisa keyboard, through the same path as Edit/Paste (one ASCII character
@@ -2062,6 +2107,7 @@ void LisaEmFrame::Update_Status(long elapsed,long idleentry)
     }
 #endif
     screen_dump_if_due();
+    ram_dump_if_due();
     keyboard_file_if_due();
     mouse_move_if_due();
     floppy_insert_if_due();

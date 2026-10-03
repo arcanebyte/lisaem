@@ -1451,6 +1451,29 @@ void seek_mouse_event(void)
     dy = 0;
   }
 
+  // Nor keep moving a pointer that does not move. Code that reads the COPS
+  // itself, rather than through the vectors the position is read from here,
+  // leaves that position as it was: the motion would go on for ever, and
+  // a loop waiting for the COPS to go quiet with it. Half a second of
+  // emulated time without the position changing, and the target counts as
+  // reached.
+  {
+    static uint16 stall_x = 0xffff, stall_y = 0xffff;
+    static XTIMER stall_since = 0;
+    if (!(dx | dy) || ratx != stall_x || raty != stall_y)
+    {
+      stall_x = ratx;
+      stall_y = raty;
+      stall_since = cpu68k_clocks;
+    }
+    else if (cpu68k_clocks - stall_since > 2500000)
+    {
+      DEBUG_LOG(0, "mouse stalled at %d,%d: giving up on %d,%d", ratx, raty, mousequeue[1].x, mousequeue[1].y);
+      dx = 0;
+      dy = 0;
+    }
+  }
+
   // do we need to move some more?  If so move, otherwise see if there has been a click, and send that.
   if ((dx | dy))
   {

@@ -1460,14 +1460,21 @@ void seek_mouse_event(void)
   // leaves that position as it was: the motion would go on for ever, and
   // a loop waiting for the COPS to go quiet with it. Half a second of
   // emulated time without the position changing, and the target counts as
-  // reached.
+  // reached. The count starts again when the host pointer moves to a new
+  // target: otherwise one stall (e.g. a target past the edge the OS clamps
+  // the pointer to) gave up on every later target too, and the pointer
+  // never moved again.
   {
     static uint16 stall_x = 0xffff, stall_y = 0xffff;
+    static int16 stall_tx = -1, stall_ty = -1;
     static XTIMER stall_since = 0;
-    if (!(dx | dy) || ratx != stall_x || raty != stall_y)
+    if (!(dx | dy) || ratx != stall_x || raty != stall_y ||
+        mousequeue[1].x != stall_tx || mousequeue[1].y != stall_ty)
     {
       stall_x = ratx;
       stall_y = raty;
+      stall_tx = mousequeue[1].x;
+      stall_ty = mousequeue[1].y;
       stall_since = cpu68k_clocks;
     }
     else if (cpu68k_clocks - stall_since > 2500000)

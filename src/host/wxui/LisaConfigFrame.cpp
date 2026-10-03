@@ -275,6 +275,50 @@ void LisaConfigFrame::OnSernoInfo(wxCommandEvent &WXUNUSED(event))
     wxMessageBox(text, _T("About your Lisa's Serial Numer"), wxICON_INFORMATION | wxOK);
 }
 
+// The boot ROM checks the serial number: nibbles 24-26 hold, in decimal, the sum of
+// nibbles 0-23 plus nibble 27, less 60 (the two FF sync bytes). If they don't match,
+// the ROM reports a CPU board error. (H ROM source @ 0cb2, as per Tom Frikker, see:
+// https://lisalist2.com/index.php/topic,313.0.html)
+void LisaConfigFrame::check_serial_checksum(void)
+{
+    wxString myserno = serialtxt->GetValue();
+    int n[32];
+
+    if (myserno.Length() != 32)
+        return; // not a full serial #, nothing to check
+    for (int i = 0; i < 32; i++)
+    {
+        unsigned long v = 0;
+        if (!myserno.SubString(i, i).ToULong(&v, 16))
+            return; // not hex
+        n[i] = (int)v;
+    }
+    // the stored checksum digits must be decimal digits for the ROM's check
+    int stored = (n[24] <= 9 && n[25] <= 9 && n[26] <= 9) ? n[24] * 100 + n[25] * 10 + n[26] : -1;
+
+    int calculated = 0;
+    for (int i = 0; i < 24; i++)
+        calculated += n[i];
+    calculated += n[27] - 60;
+    if (calculated < 0)
+        return; // no FF sync bytes, not a serial # the ROM would take anyway
+
+    if (stored == calculated)
+        return;
+
+    wxString fixedserno = myserno.SubString(0, 23) +
+                          wxString::Format(_T("%03d"), calculated) +
+                          myserno.SubString(27, 31);
+    wxString text = _T("The checksum in serial #") + myserno +
+                    _T(" is wrong, and the Lisa will report a CPU board error at boot.\n\n") +
+                    _T("With the checksum corrected it would be:\n") + fixedserno +
+                    _T("\n\nCorrect it?");
+    wxMessageDialog w(this, text, _T("Invalid Lisa Serial Number - Bad Checksum"),
+                      wxICON_QUESTION | wxYES_NO | wxNO_DEFAULT);
+    if (w.ShowModal() == wxID_YES)
+        serialtxt->SetValue(fixedserno);
+}
+
 void LisaConfigFrame::OnSavePram(wxCommandEvent &WXUNUSED(event))
 {
     FILE *F;
@@ -522,6 +566,8 @@ void LisaConfigFrame::ApplyChanges()
         if (warn.ShowModal() != wxID_YES)
             return; // user backed out - change nothing
     }
+
+    check_serial_checksum();
 
     my_lisaconfig->myserial = serialtxt->GetValue();
     my_lisaconfig->rompath = m_rompath->GetValue();

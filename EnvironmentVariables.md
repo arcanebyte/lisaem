@@ -13,6 +13,8 @@ guest. All are off unless set.
 | `LISAEM_KEYBOARD_FILE=<file>` | About five times a second, bytes appended to the file are typed on the Lisa keyboard through the Edit/Paste-to-keyboard path. Newline is Return. `^A` followed by a byte B sends B to the COPS as a raw key code (bit 7 set for key down), so a script can hold a key down. If the file shrinks it is read again from the start. |
 | `LISAEM_MOUSE_MOVE_AT=<seconds>` | Once, that many seconds after start, does what moving the pointer onto the Lisa screen does. |
 | `LISAEM_FLOPPY_AT=<seconds>,<image>` | Once, that many seconds after start, inserts the DC42 image in the floppy drive, as the menu's insert command does. Unlike `-f`, it does not restart from the floppy. |
+| `LISAEM_RAM_DUMP=<file>` | When `<file>.req` exists (checked about once a second), logical `$000000`-`$1FFFFF` as seen through MMU context 1 is saved to `<file>` and `<file>.req` is removed, so a script can read memory when it chooses. The PC, D0-D7, A0-A7 and both VIAs' IFR and IER are logged to stderr with it. |
+| `LISAEM_ADDRERR_DUMP=<file>` | At the first 68000 address error, the same 2 MB is saved to `<file>` before the guest's error handling runs, and the faulting access, PC, context, registers and SR are logged to stderr. |
 
 Times are host time, counted from when LisaEm starts.
 

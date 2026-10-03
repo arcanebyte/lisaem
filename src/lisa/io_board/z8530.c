@@ -1047,6 +1047,23 @@ static inline void avoid_rom_scc_tests(void)
 
 // want to set scc_r[port].s.rr0.r.rx_char_available=HAS_DATA, scc_r[port].s.rr0.r.tx_buffer_empty=1, scc_r[port].s.rr0.r.dcd=1, scc_r[port].s.rr0.r.cts=1
 
+// The transmit delay (z8530_event, set when a byte is sent) has run out:
+// the transmit buffer is empty, which interrupts only a channel whose
+// transmit interrupts are on (WR1), with the master enable (WR9) set, as
+// TX_BUFF_EMPTY does when a byte is written. It used to flag channel B's
+// transmit interrupt (128) whatever the enables: a guest that sends with
+// transmit interrupts off never cleared it, and the CPU went round the
+// guest's SCC interrupt handler for good.
+void z8530_tx_done(void)
+{
+  if (!scc_w[0].s.wr9.r.MIE)
+    return;
+  if (scc_w[0].s.wr1.r.txintenable)
+    TX_BUFF_EMPTY(0)
+  else if (scc_w[1].s.wr1.r.txintenable)
+    TX_BUFF_EMPTY(1)
+}
+
 int get_scc_pending_irq(void)
 {
   // int data;

@@ -407,6 +407,8 @@ void flag_via_sr_irq(int i)
 
 } /// end of shift register irq code //////////////////////////////////////////////////////////////////////////////////////////
 
+extern void z8530_tx_done(void);
+
 void flag_via_t2_irq(int i)
 {
     viatype *V = (i < 9 && i > 0) ? &via[i] : NULL;
@@ -1135,7 +1137,7 @@ void check_current_timer_irq(void)
     {
         DEBUG_LOG(0, "[zilog8530.c:]Count Zero Interrupt");
         z8530_event = -1;
-        z8530_last_irq_status_bits = 128;
+        z8530_tx_done();
     }
 
     // Handle VIA related timers from this point on

@@ -3112,18 +3112,14 @@ void lisa_wb_Oxe000_latches(uint32 addr, uint8 data)
 
     case 0x01E:
         DEBUG_LOG(100, "hardmem on");
+        // Enabling parity detection when it is already on does nothing. The boot
+        // ROM's memory test does just that on a warm start (PARTST leaves parity on,
+        // then MEMLOOP goes straight to PARON), and an NMI here made every ROM fail
+        // it: H/F with error 45, C with 71.
         if (!hardmem)
         {
             hardmem = 1;
             DEBUG_LOG(100, "hardmem=1");
-        }
-        else
-        {
-#ifndef LISA1
-            DEBUG_LOG(100, "Hardmem error already on, issuing NMI now.");
-
-            lisa_hardmem_error(pc24);
-#endif
         }
         return;
 

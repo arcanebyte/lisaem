@@ -867,7 +867,22 @@ void print_via_profile_state(char *s, uint8 data, viatype *V)
 
 int check_contrast_set(void)
 {
-    if ((via[2].via[DDRB] & 0x84) == 0x84 && (via[2].via[ORBB] & 0x4) == 4 && via[2].via[DDRA] != 0) // this is OK (DDRA used with port B!)
+    // The contrast latch (the I/O board's 74C174, fed from port A) loads on
+    // PB7's rising edge, whatever DEN (PB2) is: DEN only enables the
+    // parallel port's drivers. The boot ROM raises DEN first, to keep the
+    // value off the cable, and so does the Office System, but MacWorks Plus
+    // II's dimming strobes PB7 with DEN low. LISAEM_CONTRAST_OLD=1 brings
+    // back the earlier model: any write to the ports while DEN is high is a
+    // contrast, which takes a port A value put back after the strobe for a
+    // new one, and MacWorks' writes are never seen.
+    // Either way, while DEN is high the ports' writes don't go to the
+    // ProFile (the return value).
+    static uint8 last_pb7 = 0x80;
+    uint8 pb7 = via[2].via[ORBB] & 0x80, rise = pb7 && !last_pb7;
+    last_pb7 = pb7;
+    int den_off = (via[2].via[DDRB] & 0x84) == 0x84 && (via[2].via[ORBB] & 0x4) == 4 && via[2].via[DDRA] != 0; // this is OK (DDRA used with port B!)
+    int latch = !getenv("LISAEM_CONTRAST_OLD") ? rise && (via[2].via[DDRB] & 0x80) && via[2].via[DDRA] != 0 : den_off;
+    if (latch)
     {
         uint8 new_contrast = via[2].via[DDRA] & via[2].via[ORAA];
         // LOS and Workshop dims the screen contrast after a period of inactivity, 
@@ -893,10 +908,9 @@ int check_contrast_set(void)
             enable_vidram();
 
         contrastchange(); // force UI to adjust the display contrast to the new value.
-        return 1;
     }
 
-    return 0;
+    return den_off;
 }
 
 uint8 via2_ira(uint8 regnum)

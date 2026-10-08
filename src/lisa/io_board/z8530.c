@@ -134,12 +134,12 @@ int total_scc_received_chars = 0; // Total number of characters received from th
     {                                                         \
       if (port)                                               \
       {                                                       \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38) | RR3_IP_B_TX; \
+        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07) | RR3_IP_A_TX; \
         z8530_last_irq_status_bits = 8;                       \
       }                                                       \
       else                                                    \
       {                                                       \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07) | RR3_IP_A_TX; \
+        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38) | RR3_IP_B_TX; \
         z8530_last_irq_status_bits = 128;                     \
       }                                                       \
     }                                                         \
@@ -151,12 +151,12 @@ int total_scc_received_chars = 0; // Total number of characters received from th
     {                                                           \
       if (port)                                                 \
       {                                                         \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38) | RR3_IP_B_STAT; \
+        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07) | RR3_IP_A_STAT; \
         z8530_last_irq_status_bits = 10;                        \
       }                                                         \
       else                                                      \
       {                                                         \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07) | RR3_IP_A_STAT; \
+        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38) | RR3_IP_B_STAT; \
         z8530_last_irq_status_bits = 2;                         \
       }                                                         \
     }                                                           \
@@ -168,12 +168,12 @@ int total_scc_received_chars = 0; // Total number of characters received from th
     {                                                                        \
       if (port)                                                              \
       {                                                                      \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38) | RR3_IP_B_RX;                \
+        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07) | RR3_IP_A_RX;                \
         z8530_last_irq_status_bits = 12;                                     \
       }                                                                      \
       else                                                                   \
       {                                                                      \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07) | RR3_IP_A_RX;                \
+        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38) | RR3_IP_B_RX;                \
         z8530_last_irq_status_bits = 4;                                      \
       }                                                                      \
     }                                                                        \
@@ -185,12 +185,12 @@ int total_scc_received_chars = 0; // Total number of characters received from th
     {                                                                        \
       if (port)                                                              \
       {                                                                      \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38);                              \
+        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07);                              \
         z8530_last_irq_status_bits = 12;                                     \
       }                                                                      \
       else                                                                   \
       {                                                                      \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07);                              \
+        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38);                              \
         z8530_last_irq_status_bits = 4;                                      \
       }                                                                      \
     }                                                                        \
@@ -1105,7 +1105,7 @@ int get_scc_pending_irq(void)
     z8530_last_irq_status_bits = 0;
     scc_r[1].s.rr3.r.ch_b_rx_irq_pending = 0;
   }
-  if (!HAS_DATA(1) && z8530_last_irq_status_bits == 64)
+  if (!HAS_DATA(1) && z8530_last_irq_status_bits == 12)
   {
     z8530_last_irq_status_bits = 0;
     scc_r[1].s.rr3.r.ch_a_rx_irq_pending = 0;
@@ -1512,12 +1512,16 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
   case 9:
     DEBUG_LOG(0, "Write to 9 MIE data=%02x odata=%02x", data, odata); // there is only one port 9
     scc_w[0].w[9] = scc_w[1].w[9] = data;
-    if (data & 1)
+    /* the reset command is bits 7-6: 01 channel B, 10 channel A, 11 the
+     * hardware reset.  Bits 0 and 2-3 are VIS, DLC and MIE: taking them
+     * for resets reset channel A whenever the master interrupt enable was
+     * written, and so turned its transmitter off under MacWorks. */
+    if ((data & 0xc0) == 0x40 || (data & 0xc0) == 0xc0)
     {
       scc_channel_reset_port(0);
       DEBUG_LOG(0, "resetting port 0 (B)");
     }
-    if (data & 12)
+    if ((data & 0xc0) == 0x80 || (data & 0xc0) == 0xc0)
     {
       scc_channel_reset_port(1);
       DEBUG_LOG(0, "resetting port 1 (A)");
@@ -1690,7 +1694,8 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
       z8530_last_irq_status_bits = 0;
     } // only one wr9
 
-    if ((!port && z8530_last_irq_status_bits == 12) || (port && z8530_last_irq_status_bits == 4))
+    /* a byte read: its channel's receive interrupt taken, B's vector 4, A's 12 */
+    if ((!port && z8530_last_irq_status_bits == 4) || (port && z8530_last_irq_status_bits == 12))
       z8530_last_irq_status_bits = 0; // 20060804
 
     if (!scc_w[port].s.wr3.r.rxenable)
@@ -1709,6 +1714,8 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
 
         // This is the only place where we consume (remove) data from the receive/read/rx fliflo buffer.
         character_read = fliflo_buff_get(&SCC_READ[port]) & scc_bits_per_char_mask[port];
+        if (!HAS_DATA(port)) // the last byte taken: the channel's receive interrupt over
+          scc_r[1].r[3] &= port ? ~RR3_IP_A_RX : ~RR3_IP_B_RX;
         total_scc_received_chars++;
         if (total_scc_received_chars % 1000 == 0)
         {
@@ -1926,7 +1933,7 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
         /*
 
         */
-        uint8 r2 = scc_r[port].r[2];
+        uint8 r2;
 
         scc_r[0].r[2] = 0; /// 200608-8 <--- here here here here
         DEBUG_LOG(0, "PORT B, will include status bits");
@@ -1944,6 +1951,9 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
           scc_r[0].s.rr2.r.v2 = (z8530_last_irq_status_bits & 4) ? 1 : 0;
           scc_r[0].s.rr2.r.v3 = (z8530_last_irq_status_bits & 8) ? 1 : 0;
         }
+        // the vector as it is now: taken before it was worked out, it was
+        // the last interrupt's, and the guest ran the wrong handler
+        r2 = scc_r[port].r[2];
         DEBUG_LOG(0, "Returning %02x from register %d on port %d",
                   scc_r[port].r[2],
                   2, port);

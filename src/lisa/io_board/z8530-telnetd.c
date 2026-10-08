@@ -143,11 +143,14 @@ void init_telnet_serial_port(int portnum)
   return;
 }
 
+#define RXBUFSIZE 512
+static unsigned char rxbuf[MAX_SERIAL_PORTS][RXBUFSIZE]; // what came in, not yet handed to the SCC
+static int rxhead[MAX_SERIAL_PORTS], rxtail[MAX_SERIAL_PORTS];
+
 // returns -1 if no data (or not connected), -2 if break detected, otherwise the data itself.
 int poll_telnet_serial_read(int portnum)
 {
   int pollret = 0, received = 0;
-  unsigned char buffer[MAX_SERIAL_PORTS][3];
 
   if (portnum < 0 || portnum > MAX_SERIAL_PORTS)
     return -1; // non existant port
@@ -177,6 +180,7 @@ int poll_telnet_serial_read(int portnum)
 
       ALERT_LOG(0, "Serial Port #%d Client connected:%s\n", portnum, inet_ntoa(telnetclient[portnum].sin_addr));
       port_state[portnum] = 1; // change to connected state
+      rxhead[portnum] = rxtail[portnum] = 0;
 
       // on accept, send the telnet configuration string.
       send(clientsock[portnum], telnethax, 9, 0);
@@ -184,77 +188,68 @@ int poll_telnet_serial_read(int portnum)
     }
   }
 
-  // we're already connected, so poll for data.
+  // we're already connected.  What came in is kept, and handed out a byte
+  // at a time: recv() used to take up to three bytes and return only the
+  // first, so whatever arrived together lost two bytes in three.
+  if (rxhead[portnum] >= rxtail[portnum])
+  {
+    pfd_recv[portnum].fd = clientsock[portnum];
+    pfd_recv[portnum].events = (POLLIN | POLLPRI);
 
-  pfd_recv[portnum].fd = clientsock[portnum];
-  pfd_recv[portnum].events = (POLLIN | POLLPRI);
-
-  pollret = (poll(&pfd_recv[portnum], 1, 0));
-  if (pollret == 0)
-    return -1; // timeout
-  if (pollret < 0)
-    return -1; // perror("got poll error doh!");
-
-  if (pollret > 0)
-    if (pfd_recv[portnum].revents & (POLLIN | POLLPRI)) // we got data
+    pollret = (poll(&pfd_recv[portnum], 1, 0));
+    if (pollret <= 0)
+      return -1; // timeout, or perror("got poll error doh!");
+    if (!(pfd_recv[portnum].revents & (POLLIN | POLLPRI)))
+      return -1;
+    if ((received = recv(clientsock[portnum], rxbuf[portnum], RXBUFSIZE, 0)) <= 0) // got an error, disconnect
     {
-
-      /*Receiv emessage*/
-
-      if ((received = recv(clientsock[portnum], buffer[portnum], BUFFSIZE, 0)) < 0) // got an error, disconnect
-      {
-        // close this socket and start over
-        ALERT_LOG(0, "Failed to receive initial bytes from client, closing client connection.  Bye bye.");
-        port_state[portnum] = 0;
-        close(clientsock[portnum]);
-      }
-
-      if (received > 0)
-      {
-        if (buffer[portnum][0] == 0xff) // special telnet sequence?
-        {
-          switch (buffer[portnum][1]) // 3=^C, 8=^H
-          {
-          case 0xf3:
-            return -2; // printf("break\n");         break;
-          case 0xf1:
-            return -1; // printf("nop\n");           break;
-          case 0xef:
-            return -1; // printf("eor\n");           break;
-          case 0xee:
-            return 3; // printf("abort\n");         break;
-          case 0xf4:
-            return 3; // printf("interrupt process\n");     break;
-          case 0xf9:
-            return -1; // printf("Go ahead\n");      break;
-          case 0xf8:
-            return -1; // printf("Erase Line\n");        break;
-          case 0xf7:
-            return 8; // printf("Erase character\n");   break;
-          case 0xf6:
-            return -1; // printf("Are You there?\n");    break;
-          case 0xf5:
-            return 3; // printf("Abort Output\n");      break;
-
-          case 0x00:
-            return 0xff; // printf("sync\n"); break;  // sync or maybe 0xff itself???
-
-          case 0xff:
-            return 0xff; // maybe 0xff itself???
-
-          default:
-            return -1; // printf("unknown\n");  break;
-          }
-        }
-        buffer[portnum][1] = 0;
-        buffer[portnum][2] = 0; // clear remaining buffers
-        DEBUG_LOG(0, "Got %c %02x", buffer[portnum][0], buffer[portnum][0]);
-
-        return buffer[portnum][0];
-      }
+      // close this socket and start over
+      ALERT_LOG(0, "Failed to receive initial bytes from client, closing client connection.  Bye bye.");
+      port_state[portnum] = 0;
+      close(clientsock[portnum]);
+      return -1;
     }
+    rxhead[portnum] = 0;
+    rxtail[portnum] = received;
+  }
 
-  return -1; // nothing for the client to deal with
+  {
+    unsigned char *q = rxbuf[portnum] + rxhead[portnum];
+    int left = rxtail[portnum] - rxhead[portnum];
+
+    if (q[0] != 0xff) // a byte of data
+    {
+      rxhead[portnum]++;
+      DEBUG_LOG(0, "Got %c %02x", q[0], q[0]);
+      return q[0];
+    }
+    // a telnet command: IAC and its code, and an option after WILL, WONT,
+    // DO and DONT (taken as whole if the rest has not come yet)
+    if (left < 2)
+    {
+      rxhead[portnum] = rxtail[portnum];
+      return -1;
+    }
+    rxhead[portnum] += (q[1] >= 0xfb && q[1] <= 0xfe) ? 3 : 2;
+    if (rxhead[portnum] > rxtail[portnum])
+      rxhead[portnum] = rxtail[portnum];
+    switch (q[1]) // 3=^C, 8=^H
+    {
+    case 0xf3:
+      return -2; // break
+    case 0xee: // abort
+    case 0xf4: // interrupt process
+    case 0xf5: // abort output
+      return 3;
+    case 0xf7:
+      return 8; // erase character
+    case 0x00:
+    case 0xff:
+      return 0xff; // sync, or 0xff itself
+    default:
+      return -1; // nop, eor, go ahead, erase line, are you there, options
+    }
+  }
 }
 
 #endif

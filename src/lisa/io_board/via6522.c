@@ -341,6 +341,7 @@ void VIAProfileLoop_unused(int vianum, ProFileType *P, int event)
 // A parallel VIA's IRQ output may have just gone active (CA1 latched or IER written).  Stop the CPU
 // loop after the current instruction so the interrupt is taken now rather than at the next timer
 // event.  get_next_timer_event() then finds the real next timer again.
+extern void profile_trace(const char *fmt, ...); // TEMPORARY DIAGNOSTIC TRACE
 static void via_irq_check_now(int vianum)
 {
     if ((via[vianum].via[IER] & via[vianum].via[IFR] & 0x7f) && cpu68k_clocks_stop > cpu68k_clocks)
@@ -377,6 +378,7 @@ void VIAProfileLoop(int vianum, ProFileType *P, int event)
         if ((P->BSYLine!=0) ^  ((via[vianum].via[PCR] & 1)!=0) )
             {
                 via[vianum].via[IFR] |=VIA_IRQ_BIT_CA1;
+                profile_trace("via%d CA1 latched IER %02x IFR %02x", vianum, via[vianum].via[IER], via[vianum].via[IFR]); // TEMPORARY
                 via_irq_check_now(vianum);
 
                 DEBUG_LOG(0,"state:%d Enabled CA1(BSY) on %d->%d BSY transition pcr:%d pc24:%08x tag:profile.c",
@@ -2130,6 +2132,7 @@ void lisa_wb_Oxd800_par_via2(uint32 addr, uint8 xvalue)
         via[2].via[T1CL] = via[2].via[T1LL]; // 5 T1HC actually writes to T1HL + copies T1LL->T1CL, T1LH->T1CH
 
         via[2].t1_e = get_via_te_from_timer((via[2].via[T1CH] << 8) | via[2].via[T1LL]); // this one does tell the counter to count down!
+        profile_trace("via2 T1CH write %02x -> T1 loaded %04x, clears T1 flag (IFR was %02x)", xvalue, (via[2].via[T1CH] << 8) | via[2].via[T1LL], via[2].via[IFR]); // TEMPORARY
         FIX_CLKSTOP_VIA_T1(2);                                                           // update cpu68k_clocks_stop if needed
         via[2].t1_set_cpuclk = cpu68k_clocks;                                            // timer was set right now (at this clock)
         via[2].last_port = port;
@@ -2338,6 +2341,7 @@ void lisa_wb_Oxd800_par_via2(uint32 addr, uint8 xvalue)
             break;
         }
 #endif
+        if (via[2].via[PCR] != xvalue) profile_trace("via2 PCR %02x -> %02x%s", via[2].via[PCR], xvalue, (reg68k_pc & 0x00ff0000) == 0x00fe0000 ? "   <-- boot ROM (new boot)" : ""); // TEMPORARY
         // CA2 manual output taken from low to high is a /PSTRB pulse for an attached ProFile
         if (via[2].ProFile && ((via[2].via[PCR] >> 1) & 7) == 6 && ((xvalue >> 1) & 7) == 7)
         {
@@ -2385,6 +2389,7 @@ void lisa_wb_Oxd800_par_via2(uint32 addr, uint8 xvalue)
             via[2].via[IER] &= (0x7f ^ (xvalue & 0x7f));
 
         // IER only masks: flags stay latched in IFR.  An enabled flag interrupts right away.
+        profile_trace("via2 IER write %02x -> IER %02x IFR %02x", xvalue, via[2].via[IER], via[2].via[IFR]); // TEMPORARY
         via[2].last_port = port;
         FIX_VIA_IFR(2);
         via_irq_check_now(2);
@@ -2551,6 +2556,7 @@ uint8 lisa_rb_Oxd800_par_via2(uint32 addr)
 
     case T1CL2: // Timer 1 Low Order Counter
         DEBUG_LOG(0, "T1CL2");
+        if (via[2].via[IFR] & VIA_IRQ_BIT_T1) profile_trace("via2 T1CL read clears T1 flag"); // TEMPORARY
         VIA_CLEAR_IRQ_T1(2); // clear T1 irq on T1 read low or write high
         // via[2].via[T1CL]=get_via_timer_left_from_te(via[2].t1_e) & 0xff;
 
@@ -3561,6 +3567,7 @@ void lisa_wb_ext_2par_via(ViaType *V, uint32 addr, uint8 xvalue)
             break;
         }
 #endif
+        if (V->via[PCR] != xvalue) profile_trace("via%d PCR %02x -> %02x", V->vianum, V->via[PCR], xvalue); // TEMPORARY
         // CA2 manual output taken from low to high is a /PSTRB pulse for an attached ProFile
         if (V->ProFile && ((V->via[PCR] >> 1) & 7) == 6 && ((xvalue >> 1) & 7) == 7)
         {
@@ -3603,6 +3610,7 @@ void lisa_wb_ext_2par_via(ViaType *V, uint32 addr, uint8 xvalue)
         FIX_VIAP_IFR(); // bit 7 = any enabled flag set
 
         V->last_port = port;
+        profile_trace("via%d IER write %02x -> IER %02x IFR %02x", V->vianum, xvalue, V->via[IER], V->via[IFR]); // TEMPORARY
         via_irq_check_now(V->vianum);
 // from via 1// if bit 7=0, then all 1 bits are reversed. 1=no irq, 0=irq enabled.
 /// if   (xvalue & 128) {via[1].via[IER] |= xvalue;}

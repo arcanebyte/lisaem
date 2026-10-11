@@ -1361,7 +1361,7 @@ void add_mouse_event(int16 x, int16 y, int8 button)
     mousequeuelen = 0;
   } // we overflowed, just dump the old ones 20060609 17:15
 
-  if (!cops_mouse || contrast == 0xff)
+  if (!cops_mouse || (contrast == 0xff && getenv("LISAEM_CONTRAST_OLD"))) // the Lisa's mouse works at $FF
     return;
 
   if (x < 0 || x > lisa_vid_size_x || y < 0 || y > lisa_vid_size_y)
@@ -1409,7 +1409,7 @@ void seek_mouse_event(void)
 
   mouse_pending = 0;
 
-  if (!cops_mouse || contrast == 0xff || !mousequeuelen)
+  if (!cops_mouse || (contrast == 0xff && getenv("LISAEM_CONTRAST_OLD")) || !mousequeuelen)
   {
     DEBUG_LOG(0, "skipping seek_mouse_event because:%d,%d,%d\n", cops_mouse, contrast, mousequeuelen);
     return;

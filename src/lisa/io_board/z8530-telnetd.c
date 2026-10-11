@@ -201,7 +201,18 @@ int poll_telnet_serial_read(int portnum)
 
       /*Receiv emessage*/
 
-      if ((received = recv(clientsock[portnum], buffer[portnum], BUFFSIZE, 0)) < 0) // got an error, disconnect
+      // One byte at a time: taking up to BUFFSIZE here and returning only the
+      // first dropped the rest whenever bytes arrived together. A telnet
+      // command (0xff) reads the rest of itself: its command byte, and for
+      // WILL, WONT, DO and DONT (0xfb-0xfe) the option byte, which a telnet
+      // client sends together, so that none of it reaches the Lisa as data.
+      if ((received = recv(clientsock[portnum], buffer[portnum], 1, 0)) > 0 && buffer[portnum][0] == 0xff)
+      {
+        recv(clientsock[portnum], &buffer[portnum][1], 1, 0);
+        if (buffer[portnum][1] >= 0xfb && buffer[portnum][1] <= 0xfe)
+          recv(clientsock[portnum], &buffer[portnum][2], 1, 0);
+      }
+      if (received < 0) // got an error, disconnect
       {
         // close this socket and start over
         ALERT_LOG(0, "Failed to receive initial bytes from client, closing client connection.  Bye bye.");

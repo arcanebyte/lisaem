@@ -180,15 +180,15 @@ LisaConfigFrame::LisaConfigFrame(const wxString &title, LisaConfig *lisaconfig)
     serportopts[3] = _T("File");
     serportopts[4] = _T("ImageWriter");
     serportopts[5] = _T("Terminal");
+    serportopts[6] = _T("TelnetD");
 
 #ifndef __MSVCRT__
-    serportopts[6] = _T("TelnetD");
     serportopts[7] = _T("Shell");
     serportopts[8] = _T("Serial");
     serportopts[9] = _T("PseudoTTY");
     serialopts = 10;
 #else
-    serialopts = 6;
+    serialopts = 7;
 #endif
 
     slotcard[0] = _T("Dual Parallel");

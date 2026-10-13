@@ -28,6 +28,11 @@
 *                            Lisa serial ports                                         *
 \**************************************************************************************/
 
+#ifdef __MSVCRT__
+// Windows: Winsock has to come before anything that might include <windows.h>.
+#include <winsock2.h>
+#endif
+
 #include <vars.h>
 #include <z8530_structs.h>
 
@@ -46,6 +51,18 @@
 
 #include <unistd.h>
 
+// The few places where Winsock differs from BSD sockets.  The wsock32 library
+// that the Windows build already links provides everything used here.
+#ifdef __MSVCRT__
+typedef int telnet_socklen_t;
+#define TELNET_CLOSE(s) closesocket(s)
+#define TELNET_ERRNO ((int)WSAGetLastError())
+#else
+typedef socklen_t telnet_socklen_t;
+#define TELNET_CLOSE(s) close(s)
+#define TELNET_ERRNO errno
+#endif
+
 ////////////////////////////// Telnet Server hookups  ////////////////////////////
 
 #define MAX_SERIAL_PORTS 2
@@ -56,9 +73,34 @@
 
 int port_state[MAX_SERIAL_PORTS]; // 0=waiting for connection, 1=connected, -1=telnetd not used.
 
-///// telnetd code - unix only ////////////////////////////////////////////////////////////////////////////////////////////////
-#ifndef __MSVCRT__
-struct pollfd pfd_accept[MAX_SERIAL_PORTS], pfd_recv[MAX_SERIAL_PORTS];
+///// telnetd code - unix and windows //////////////////////////////////////////////////////////////////////////////////////////
+
+// Is there something to read on socket s: a waiting connection on a listening
+// socket, or data (or the far end closing) on a connected one?  Never waits.
+// Returns 1 for yes, 0 for no, -1 on error.  Windows has no poll() in wsock32,
+// so it uses select() with a zero timeout, which amounts to the same thing.
+static int telnet_readable(int s)
+{
+#ifdef __MSVCRT__
+  fd_set rd;
+  struct timeval tv = {0, 0};
+  FD_ZERO(&rd);
+  FD_SET((SOCKET)s, &rd);
+  int r = select(0, &rd, NULL, NULL, &tv); // the first argument is ignored on Windows
+  if (r == SOCKET_ERROR)
+    return -1;
+  return (r > 0) ? 1 : 0;
+#else
+  struct pollfd pfd;
+  pfd.fd = s;
+  pfd.events = (POLLIN | POLLPRI);
+  pfd.revents = 0;
+  int r = poll(&pfd, 1, 0);
+  if (r < 0)
+    return -1;
+  return (r > 0 && (pfd.revents & (POLLIN | POLLPRI | POLLHUP | POLLERR))) ? 1 : 0;
+#endif
+}
 
 unsigned telnet_buffer[MAX_SERIAL_PORTS][BUFFSIZE];
 
@@ -84,6 +126,8 @@ void write_serial_port_telnetd(unsigned int port, char c)
   char buffer[2];
   buffer[0] = c;
   ALERT_LOG(0, "Write char %02x %c to port %d", c, (c > 31 ? c : '.'), port);
+  if (port >= MAX_SERIAL_PORTS || port_state[port] != 1)
+    return; // nobody connected yet: there is no client socket to send to
   send(clientsock[(unsigned)port], buffer, 1, 0); // should this be telnetserver?
 }
 
@@ -93,10 +137,25 @@ void init_telnet_serial_port(int portnum)
 
   ALERT_LOG(0, "Initializing telnetd for serial port #%d", portnum);
 
-  /*Create the TCP socket*/
-  if ((serversock[portnum] = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP | SO_REUSEADDR)) < 0)
+#ifdef __MSVCRT__
+  static int winsock_started = 0;
+  if (!winsock_started)
   {
-    ALERT_LOG(0, "could not create the socket for serial port #%d - port now disabled because:%d %s", portnum, errno, strerror(errno));
+    WSADATA wsadata;
+    if (WSAStartup(MAKEWORD(2, 2), &wsadata) != 0)
+    {
+      ALERT_LOG(0, "WSAStartup failed for serial port #%d - port now disabled because:%d", portnum, TELNET_ERRNO);
+      port_state[portnum] = -1;
+      return;
+    }
+    winsock_started = 1;
+  }
+#endif
+
+  /*Create the TCP socket*/
+  if ((serversock[portnum] = (int)socket(PF_INET, SOCK_STREAM, IPPROTO_TCP | SO_REUSEADDR)) < 0)
+  {
+    ALERT_LOG(0, "could not create the socket for serial port #%d - port now disabled because:%d %s", portnum, TELNET_ERRNO, strerror(TELNET_ERRNO));
     port_state[portnum] = -1;
     return;
   }
@@ -123,7 +182,7 @@ void init_telnet_serial_port(int portnum)
   /*Bind the server socket*/
   if (bind(serversock[portnum], (struct sockaddr *)&telnetserver[portnum], sizeof(telnetserver[portnum])) < 0) // could not bind to the server port, so, bye bye
   {
-    ALERT_LOG(0, "Cannot bind for serial port #%d - port now disabled because:%d %s", portnum, errno, strerror(errno));
+    ALERT_LOG(0, "Cannot bind for serial port #%d - port now disabled because:%d %s", portnum, TELNET_ERRNO, strerror(TELNET_ERRNO));
     port_state[portnum] = -1;
     return;
   }
@@ -149,21 +208,16 @@ int poll_telnet_serial_read(int portnum)
   int pollret = 0, received = 0;
   unsigned char buffer[MAX_SERIAL_PORTS][3];
 
-  if (portnum < 0 || portnum > MAX_SERIAL_PORTS)
+  if (portnum < 0 || portnum >= MAX_SERIAL_PORTS)
     return -1; // non existant port
   if (port_state[portnum] == -1)
     return -1; // port disabled
 
   if (port_state[portnum] == 0) // we're waiting for a telnet connection (LISTEN_STATE)
   {
-    int pollret;
-    unsigned int clientlen = sizeof(telnetclient[portnum]);
+    telnet_socklen_t clientlen = sizeof(telnetclient[portnum]);
 
-    pfd_accept[portnum].fd = serversock[portnum];
-    pfd_accept[portnum].events = (POLLIN | POLLPRI);
-    // pfd1.revents
-
-    pollret = (poll(&pfd_accept[portnum], 1, 0)); // we can change this to poll all ports at once, but some may already be connected.
+    pollret = telnet_readable(serversock[portnum]); // we can change this to poll all ports at once, but some may already be connected.
     if (pollret == 0)
       return -1; // timeout
     if (pollret == -1)
@@ -172,7 +226,7 @@ int poll_telnet_serial_read(int portnum)
     if (pollret > 0)
     {
       /*Wait for client connection*/
-      if ((clientsock[portnum] = accept(serversock[portnum], (struct sockaddr *)&telnetclient[portnum], &clientlen)) < 0)
+      if ((clientsock[portnum] = (int)accept(serversock[portnum], (struct sockaddr *)&telnetclient[portnum], &clientlen)) < 0)
         return -1; // shit happens, rama, rama.
 
       ALERT_LOG(0, "Serial Port #%d Client connected:%s\n", portnum, inet_ntoa(telnetclient[portnum].sin_addr));
@@ -186,17 +240,13 @@ int poll_telnet_serial_read(int portnum)
 
   // we're already connected, so poll for data.
 
-  pfd_recv[portnum].fd = clientsock[portnum];
-  pfd_recv[portnum].events = (POLLIN | POLLPRI);
-
-  pollret = (poll(&pfd_recv[portnum], 1, 0));
+  pollret = telnet_readable(clientsock[portnum]);
   if (pollret == 0)
     return -1; // timeout
   if (pollret < 0)
     return -1; // perror("got poll error doh!");
 
-  if (pollret > 0)
-    if (pfd_recv[portnum].revents & (POLLIN | POLLPRI)) // we got data
+  if (pollret > 0) // we got data, or the client went away
     {
 
       /*Receiv emessage*/
@@ -206,18 +256,20 @@ int poll_telnet_serial_read(int portnum)
       // command (0xff) reads the rest of itself: its command byte, and for
       // WILL, WONT, DO and DONT (0xfb-0xfe) the option byte, which a telnet
       // client sends together, so that none of it reaches the Lisa as data.
-      if ((received = recv(clientsock[portnum], buffer[portnum], 1, 0)) > 0 && buffer[portnum][0] == 0xff)
+      if ((received = recv(clientsock[portnum], (char *)buffer[portnum], 1, 0)) > 0 && buffer[portnum][0] == 0xff)
       {
-        recv(clientsock[portnum], &buffer[portnum][1], 1, 0);
+        recv(clientsock[portnum], (char *)&buffer[portnum][1], 1, 0);
         if (buffer[portnum][1] >= 0xfb && buffer[portnum][1] <= 0xfe)
-          recv(clientsock[portnum], &buffer[portnum][2], 1, 0);
+          recv(clientsock[portnum], (char *)&buffer[portnum][2], 1, 0);
       }
-      if (received < 0) // got an error, disconnect
+      if (received <= 0) // 0: the client closed the connection; <0: an error. Either way, disconnect.
       {
-        // close this socket and start over
-        ALERT_LOG(0, "Failed to receive initial bytes from client, closing client connection.  Bye bye.");
+        // close this socket and go back to waiting for the next connection
+        ALERT_LOG(0, "Serial port #%d client %s, closing client connection.  Bye bye.", portnum,
+                  (received == 0 ? "disconnected" : "receive failed"));
         port_state[portnum] = 0;
-        close(clientsock[portnum]);
+        TELNET_CLOSE(clientsock[portnum]);
+        return -1;
       }
 
       if (received > 0)
@@ -268,5 +320,4 @@ int poll_telnet_serial_read(int portnum)
   return -1; // nothing for the client to deal with
 }
 
-#endif
 /////////////////////////////////////////////////////////////////////////////

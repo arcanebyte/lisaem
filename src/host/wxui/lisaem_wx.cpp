@@ -9969,7 +9969,6 @@ extern "C" void connect_device_to_serial(int port, FILE **scc_port_F, uint8 *ser
       return;
     }
 
-#ifndef __MSVCRT__
     if (setting->IsSameAs(_T("TelnetD"), false))
     {
       unsigned long x;
@@ -9985,6 +9984,7 @@ extern "C" void connect_device_to_serial(int port, FILE **scc_port_F, uint8 *ser
       return;
     }
 
+#ifndef __MSVCRT__
     if (setting->IsSameAs(_T("PseudoTTY"), false))
     {
       unsigned long x;

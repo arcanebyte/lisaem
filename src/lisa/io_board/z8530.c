@@ -737,15 +737,15 @@ void initialize_scc(int actual)
       scc_fn[port].set_baud_rate = set_port_baud_tty;
 
       break;
+#else
+    // fallthrough to default for unsupported on windows
+#endif
     case SCC_TERMINAL:
       scc_fn[port].read_serial_port = read_serial_port_terminal;
       scc_fn[port].write_serial_port = write_serial_port_terminal;
       scc_fn[port].read_port_if_ready = read_port_if_ready_terminal;
       break;
 
-#else
-    // fallthrough to default for unsupported on windows
-#endif
     default: // fallthrough, includes SCC_NOTHING.
       // ALERT_LOG(0,"Not sure what to connect to this port");
       scc_fn[port].read_serial_port = read_serial_port_nothing;

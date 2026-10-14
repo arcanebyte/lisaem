@@ -261,6 +261,7 @@ void set_baud_rate(int port, uint32 baud);
 extern char read_serial_port_telnetd(unsigned int port);
 extern void write_serial_port_telnetd(unsigned int port, char c);
 extern int poll_telnet_serial_read(int portnum);
+extern void check_telnet_connection(int portnum);
 
 //::TODO:: find a way to implement a windows version of pty/tty
 #ifndef __MSVCRT__
@@ -558,10 +559,11 @@ void read_port_if_ready_tty(unsigned int port)
 
 void read_port_if_ready_telnetd(unsigned int port)
 {
-  if (fliflo_buff_is_full(&SCC_READ[port]))
+  if (fliflo_buff_is_full(&SCC_READ[port]) || (port == 0 && waiting_for_lisa_to_read_port_b))
+  {
+    check_telnet_connection(port); // no room for data, but a client may have come or gone
     return;
-  if (port == 0 && waiting_for_lisa_to_read_port_b)
-    return;
+  }
   if (port == 0 && (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp < SCC_MIN_CYCLES_BETWEEN_READS))
     return;
   // int, not char: a 0xff data byte read into a char equals -1 ("no data")

@@ -9969,7 +9969,6 @@ extern "C" void connect_device_to_serial(int port, FILE **scc_port_F, uint8 *ser
       return;
     }
 
-#ifndef __MSVCRT__
     if (setting->IsSameAs(_T("TelnetD"), false))
     {
       unsigned long x;
@@ -9985,6 +9984,7 @@ extern "C" void connect_device_to_serial(int port, FILE **scc_port_F, uint8 *ser
       return;
     }
 
+#ifndef __MSVCRT__
     if (setting->IsSameAs(_T("PseudoTTY"), false))
     {
       unsigned long x;
@@ -10020,23 +10020,6 @@ extern "C" void connect_device_to_serial(int port, FILE **scc_port_F, uint8 *ser
       return;
     }
 
-    if (setting->IsSameAs(_T("Terminal"), false))
-    {
-      unsigned long x;
-      *scc_port_F = NULL;
-      *serial = SCC_TERMINAL;
-
-      ALERT_LOG(0, "-----------------------------------------\n\n");
-      ALERT_LOG(0, "Attaching new terminal to serial port %d", port);
-
-      init_terminal_serial_port(port);
-
-      ALERT_LOG(0, "return from init_terminal_serial_port %d", port);
-      ALERT_LOG(0, "-----------------------------------------\n\n");
-
-      return;
-    }
-
     if (setting->IsSameAs(_T("Serial"), false))
     {
       unsigned long x;
@@ -10055,6 +10038,23 @@ extern "C" void connect_device_to_serial(int port, FILE **scc_port_F, uint8 *ser
     }
 
 #endif
+
+    if (setting->IsSameAs(_T("Terminal"), false))
+    {
+      unsigned long x;
+      *scc_port_F = NULL;
+      *serial = SCC_TERMINAL;
+
+      ALERT_LOG(0, "-----------------------------------------\n\n");
+      ALERT_LOG(0, "Attaching new terminal to serial port %d", port);
+
+      init_terminal_serial_port(port);
+
+      ALERT_LOG(0, "return from init_terminal_serial_port %d", port);
+      ALERT_LOG(0, "-----------------------------------------\n\n");
+
+      return;
+    }
 
     if (setting->IsSameAs(_T("ImageWriter"), false))
     {

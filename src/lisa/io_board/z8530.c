@@ -257,12 +257,13 @@ void write_serial_port_imagewriter(unsigned int port, char data);
 uint32 get_baud_rate(unsigned int port);
 void set_baud_rate(int port, uint32 baud);
 
-//::TODO:: find a way to implement a windows version of telnetd and pty/tty
-#ifndef __MSVCRT__
-
+// TelnetD works on every platform (Winsock on Windows).
 extern char read_serial_port_telnetd(unsigned int port);
 extern void write_serial_port_telnetd(unsigned int port, char c);
 extern int poll_telnet_serial_read(int portnum);
+
+//::TODO:: find a way to implement a windows version of pty/tty
+#ifndef __MSVCRT__
 
 extern char read_serial_port_shell(unsigned int port);
 extern void write_serial_port_shell(unsigned int port, char c);
@@ -281,7 +282,6 @@ extern void set_port_baud_tty(int port, uint32 baud);
 char read_serial_port_shell(unsigned int port) { return 0; }
 char read_serial_port_pty(unsigned int port) { return 0; }
 extern char read_serial_port_tty(unsigned int port);
-int poll_telnet_serial_read(int portnum) { return 0; }
 #endif
 
 // void write_serial_port_terminal(int port, uint8 data); //(jamesdenton) type mismatch between uint8 and char; need to address this
@@ -564,8 +564,10 @@ void read_port_if_ready_telnetd(unsigned int port)
     return;
   if (port == 0 && (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp < SCC_MIN_CYCLES_BETWEEN_READS))
     return;
-  char data = poll_telnet_serial_read(port);
-  if (data != -1)
+  // int, not char: a 0xff data byte read into a char equals -1 ("no data")
+  // and was dropped.  Anything below 0 (-1 no data, -2 break) is not data.
+  int data = poll_telnet_serial_read(port);
+  if (data >= 0)
   {
     if (port == 0)
     {
@@ -707,13 +709,13 @@ void initialize_scc(int actual)
       scc_fn[port].set_dtr = set_dtr_loopbackplug;
       scc_fn[port].set_rts = set_rts_loopbackplug;
       break;
-#ifndef __MSVCRT__
     case SCC_TELNETD:
       scc_fn[port].read_serial_port = read_serial_port_telnetd;
       scc_fn[port].write_serial_port = write_serial_port_telnetd;
       scc_fn[port].read_port_if_ready = read_port_if_ready_telnetd;
       break;
 
+#ifndef __MSVCRT__
     case SCC_SHELL:
       scc_fn[port].read_serial_port = read_serial_port_shell;
       scc_fn[port].write_serial_port = write_serial_port_shell;
@@ -735,15 +737,15 @@ void initialize_scc(int actual)
       scc_fn[port].set_baud_rate = set_port_baud_tty;
 
       break;
+#else
+    // fallthrough to default for unsupported on windows
+#endif
     case SCC_TERMINAL:
       scc_fn[port].read_serial_port = read_serial_port_terminal;
       scc_fn[port].write_serial_port = write_serial_port_terminal;
       scc_fn[port].read_port_if_ready = read_port_if_ready_terminal;
       break;
 
-#else
-    // fallthrough to default for unsupported on windows
-#endif
     default: // fallthrough, includes SCC_NOTHING.
       // ALERT_LOG(0,"Not sure what to connect to this port");
       scc_fn[port].read_serial_port = read_serial_port_nothing;
@@ -1774,11 +1776,11 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
 
     // need to insert other pollers here for polled I/O
     // poll_telnet_serial_read(port);
-#ifndef __MSVCRT__
       if (serial_b == SCC_TELNETD)
         read_port_if_ready_telnetd(0);
       if (serial_a == SCC_TELNETD)
         read_port_if_ready_telnetd(1);
+#ifndef __MSVCRT__
       if (serial_b == SCC_SHELL)
         read_port_if_ready_shell(0);
       if (serial_a == SCC_SHELL)

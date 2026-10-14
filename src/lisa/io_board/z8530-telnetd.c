@@ -202,6 +202,37 @@ void init_telnet_serial_port(int portnum)
   return;
 }
 
+// While the Lisa has yet to take the last byte, poll_telnet_serial_read() is
+// not called, so a client that disconnected then went unnoticed and the port
+// never took another connection.  This handles both without reading any data:
+// a waiting connection is accepted, and a connected socket is peeked and
+// closed only on end-of-file (or an error).  Bytes the client sent before
+// closing are left for the Lisa to read.
+void check_telnet_connection(int portnum)
+{
+  char c;
+  int received;
+
+  if (portnum < 0 || portnum >= MAX_SERIAL_PORTS)
+    return;
+  if (port_state[portnum] == 0)
+  {
+    poll_telnet_serial_read(portnum); // while listening it only accepts, it never returns data
+    return;
+  }
+  if (port_state[portnum] != 1)
+    return;
+  if (telnet_readable(clientsock[portnum]) <= 0)
+    return;
+  if ((received = recv(clientsock[portnum], &c, 1, MSG_PEEK)) > 0)
+    return; // data waiting: leave it for the Lisa
+
+  ALERT_LOG(0, "Serial port #%d client %s while the Lisa was busy, closing client connection.  Bye bye.", portnum,
+            (received == 0 ? "disconnected" : "receive failed"));
+  port_state[portnum] = 0;
+  TELNET_CLOSE(clientsock[portnum]);
+}
+
 // returns -1 if no data (or not connected), -2 if break detected, otherwise the data itself.
 int poll_telnet_serial_read(int portnum)
 {

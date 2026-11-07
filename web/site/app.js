@@ -12,6 +12,7 @@ let lisa = null;              // current machine (null until first boot)
 let floppy = null;            // { name, bytes }
 let profile = null;           // { name, bytes }
 let rom = null;               // { name, rom: Uint8Array | {lo, hi} }
+let bootFrom = null;          // 'floppy' | 'profile' | 'menu' (the ROM's startup menu): what Power on starts
 let screenW = SCREEN_W, screenH = SCREEN_H;   // current guest display size (XL ROMs differ)
 let paused = false;
 let speed = 1;
@@ -28,7 +29,8 @@ function log(msg) {
 }
 
 function setEnabled(on) {
-  for (const id of ['btnPause', 'btnReset', 'btnShot', 'btnType', 'btnSaveState']) $(id).disabled = !on;
+  for (const id of ['btnPause', 'btnShot', 'btnType', 'btnSaveState']) $(id).disabled = !on;
+  renderPower();
 }
 
 function drawScreen() { display.present(lisa.screen()); }
@@ -73,13 +75,13 @@ function updateStatus() {
 // ---- machine lifecycle ------------------------------------------------------------------
 
 async function newMachine() {
-  if (!floppy && !profile && !rom) return false;
+  if (!bootFrom) return false;
   // Do all the awaiting before the machine exists: once `lisa` is set the render loop runs it, and an
   // un-booted machine would execute garbage from address 0.
   const profileBytes = profile ? await diskBytes('profile', profile) : null;
   const floppyBytes = floppy ? await diskBytes('floppy', floppy) : null;
   lisa = await Lisa.create({ ramKB: 1024, clock: 'now' });
-  if (profile && !lisa.mountProfile(profileBytes)) log('Could not mount the ProFile image.');
+  if (profile && !lisa.mountProfile(profileBytes)) log('Could not mount the hard disk image.');
   if (floppy && !lisa.insertFloppy(floppyBytes)) { log('That does not look like a valid floppy image.'); lisa = null; return false; }
   baseline.profile = profile ? lisa.diskHash(0) : 0;
   baseline.floppy = floppy ? lisa.diskHash(1) : 0;
@@ -89,11 +91,10 @@ async function newMachine() {
     try {
       const info = lisa.loadROM(rom.rom);
       log(`ROM ${info.version} (${info.format})${info.checksumOk ? '' : ': checksum differs from a stock ROM, it may misbehave'}`);
-      const want = $('romBoot').value;
-      ok = lisa.powerOn({ boot: want === 'floppy' && !floppy ? 'none' : want === 'profile' && !profile ? 'none' : want });
+      ok = lisa.powerOn({ boot: bootFrom === 'menu' ? 'none' : bootFrom });
     } catch (e) { log(String(e.message || e)); lisa = null; return false; }
   } else {
-    ok = floppy ? lisa.bootFloppy() : lisa.bootProfile();
+    ok = bootFrom === 'profile' ? lisa.bootProfile() : lisa.bootFloppy();
   }
   flushMessages();
   if (!ok) { stopped = true; return false; }
@@ -101,9 +102,8 @@ async function newMachine() {
   const s = lisa.screen(); screenW = s.width; screenH = s.height;
   display.setAspect(screenW === SCREEN_W ? $('aspect').value : screenW / screenH); // XL screens have square-ish pixels
   $('hint').classList.add('gone');
+  paused = false; $('btnPause').textContent = 'Pause';
   setEnabled(true);
-  $('btnPause').textContent = 'Pause';
-  paused = false;
   return true;
 }
 
@@ -152,68 +152,129 @@ requestAnimationFrame(frame);
 setInterval(updateStatus, 250);
 setInterval(flushMessages, 1000);
 
-// ---- disk loading -----------------------------------------------------------------------
+// ---- disks and the power button ---------------------------------------------------------
+//
+// Loading a disk only fills its slot; Power on (or dropping a file on the screen) starts the machine.
+
+const fmtSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);
+const IS_ROM_NAME = /\.(bin|rom|lo|hi)$/i;
+const HARD_DISK_BYTES = 2 * 1024 * 1024;       // floppies are under 1 MB, ProFiles are 5 MB and up
+
+/** Which slot a file belongs in, judged by name and size. */
+const classify = (name, size) => (IS_ROM_NAME.test(name) ? 'rom' : size > HARD_DISK_BYTES ? 'profile' : 'floppy');
+
+function availableDevices() {
+  return [floppy && 'floppy', profile && 'profile', rom && 'menu'].filter(Boolean);
+}
+
+/** Keep the boot-from choice valid; `prefer` is the device the user just added. */
+function chooseBootFrom(prefer) {
+  const have = availableDevices();
+  if (prefer && have.includes(prefer)) bootFrom = prefer;
+  else if (!have.includes(bootFrom)) bootFrom = have[0] ?? null;
+}
+
+function renderPower() {
+  const have = availableDevices(), labels = { floppy: 'Floppy disk', profile: 'Hard disk (ProFile)', menu: "The ROM's startup menu" };
+  const sel = $('bootFrom');
+  sel.innerHTML = have.map((d) => `<option value="${d}">${labels[d]}</option>`).join('');
+  sel.disabled = have.length === 0;
+  if (bootFrom) sel.value = bootFrom;
+  $('btnPower').disabled = !bootFrom;
+  $('btnPower').textContent = lisa ? 'Restart' : 'Power on';
+  const via = rom ? 'through the boot ROM' : 'directly, with no ROM';
+  $('bootHint').textContent = !bootFrom ? 'Add a floppy or a hard disk to begin.'
+    : bootFrom === 'menu' ? 'Powers on through the boot ROM and stops at its startup menu.'
+    : `${lisa ? 'Restarts' : 'Starts'} the ${bootFrom === 'floppy' ? 'floppy' : 'hard disk'} ${via}.`;
+}
+
+function renderSlots() {
+  // textContent only: file names come from the user's disk and must never be parsed as HTML
+  const set = (nameId, sizeId, m, size) => {
+    $(nameId).textContent = m ? m.name : (nameId === 'romName' ? 'none' : 'empty');
+    $(nameId).classList.toggle('empty', !m);
+    $(nameId).title = m ? m.name : '';
+    $(sizeId).textContent = m && size ? size(m) : '';
+  };
+  set('floppyName', 'floppySize', floppy, (m) => fmtSize(m.bytes.length));
+  set('profileName', 'profileSize', profile, (m) => fmtSize(m.bytes.length));
+  set('romName', 'romSize', rom, (m) => (m.rom.lo ? `${fmtSize(m.rom.lo.length + m.rom.hi.length)}, lo + hi` : fmtSize(m.rom.length)));
+  $('btnEjectFloppy').disabled = !floppy;
+  $('btnEjectProfile').disabled = !profile;
+  $('btnForgetRom').disabled = !rom;
+  $('romState').textContent = rom ? 'loaded' : 'none';
+  refreshDiskButtons();
+  chooseBootFrom();
+  renderPower();
+}
+
+/** Show a button as busy while an async job runs, and always put it back. */
+async function busy(btn, label, job) {
+  const was = btn.textContent;
+  btn.disabled = true; btn.textContent = label;
+  try { return await job(); } finally { btn.textContent = was; btn.disabled = false; }
+}
+
+async function readBytes(file) { return new Uint8Array(await file.arrayBuffer()); }
 
 async function takeFloppy(file) {
-  floppy = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
-  $('floppyName').textContent = `${file.name} (${(floppy.bytes.length / 1024).toFixed(0)} KB)`;
-  showRom();
-  log(`Loaded floppy ${file.name}`);
+  floppy = { name: file.name, bytes: await readBytes(file) };
+  chooseBootFrom('floppy'); renderSlots(); log(`Floppy: ${file.name}`);
+}
+async function takeProfile(file) {
+  profile = { name: file.name, bytes: await readBytes(file) };
+  chooseBootFrom('profile'); renderSlots(); log(`Hard disk: ${file.name}`);
 }
 
-$('fileFloppy').addEventListener('change', (e) => e.target.files[0] && takeFloppy(e.target.files[0]));
-$('btnBootFloppy').addEventListener('click', async () => { await newMachine(); canvas.focus(); });
+$('btnFloppy').addEventListener('click', () => $('fileFloppy').click());
 $('btnProfile').addEventListener('click', () => $('fileProfile').click());
-$('fileProfile').addEventListener('change', async (e) => {
-  const f = e.target.files[0]; if (!f) return;
-  profile = { name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) };
-  $('profileName').textContent = `ProFile: ${f.name} — mounted at the next boot`; showRom();
+$('fileFloppy').addEventListener('change', (e) => { if (e.target.files[0]) takeFloppy(e.target.files[0]); e.target.value = ''; });
+$('fileProfile').addEventListener('change', (e) => { if (e.target.files[0]) takeProfile(e.target.files[0]); e.target.value = ''; });
+$('btnEjectFloppy').addEventListener('click', () => { floppy = null; renderSlots(); log('Floppy removed (takes effect at the next power on).'); });
+$('btnEjectProfile').addEventListener('click', () => { profile = null; renderSlots(); log('Hard disk removed (takes effect at the next power on).'); });
+$('bootFrom').addEventListener('change', (e) => { bootFrom = e.target.value; renderPower(); });
+$('btnPower').addEventListener('click', async () => {
+  $('btnPower').disabled = true;            // one machine at a time while it is being built
+  try { await newMachine(); } finally { renderPower(); }
+  canvas.focus();
 });
 
-for (const [el, cls] of [[$('screenWrap'), 'drag'], [$('dropFloppy'), 'drag']]) {
-  el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add(cls); });
-  el.addEventListener('dragleave', () => el.classList.remove(cls));
-  el.addEventListener('drop', async (e) => {
-    e.preventDefault(); el.classList.remove(cls);
-    const f = e.dataTransfer.files[0];
-    if (f) { await takeFloppy(f); await newMachine(); canvas.focus(); }
-  });
+// Drag and drop: onto a slot loads that slot; onto the screen sorts the files out and powers on.
+function dropTarget(el, handler) {
+  el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag'); });
+  el.addEventListener('dragleave', () => el.classList.remove('drag'));
+  el.addEventListener('drop', async (e) => { e.preventDefault(); el.classList.remove('drag'); await handler([...e.dataTransfer.files]); });
 }
+dropTarget($('slotFloppy'), async (fs) => fs[0] && takeFloppy(fs[0]));
+dropTarget($('slotProfile'), async (fs) => fs[0] && takeProfile(fs[0]));
+dropTarget($('slotRom'), async (fs) => takeRom(fs));
+dropTarget($('screenWrap'), async (fs) => {
+  const roms = fs.filter((f) => classify(f.name, f.size) === 'rom');
+  if (roms.length) await takeRom(roms);
+  for (const f of fs.filter((x) => !roms.includes(x))) await (classify(f.name, f.size) === 'profile' ? takeProfile(f) : takeFloppy(f));
+  await newMachine(); canvas.focus();
+});
 
-// Disk images served by `serve.mjs --media <dir>` (optional).
+// Disk images and ROMs served by `serve.mjs --media <dir>` (optional).
 (async () => {
   try {
     const r = await fetch('/media/index.json');
     if (!r.ok) return;
     const all = await r.json();
-    const isRom = (d) => /\.(bin|rom|lo|hi)$/i.test(d.name);
-    const roms = all.filter(isRom), list = all.filter((d) => !isRom(d));
+    const roms = all.filter((d) => classify(d.name, d.size) === 'rom'), list = all.filter((d) => classify(d.name, d.size) !== 'rom');
+    const fetchFile = async (d) => new File([await (await fetch('/media/' + encodeURIComponent(d.name))).arrayBuffer()], d.name);
     if (roms.length) {
       $('btnFolderRom').hidden = false;
-      $('btnFolderRom').addEventListener('click', async () => {
-        const get = async (d) => new File([await (await fetch('/media/' + encodeURIComponent(d.name))).arrayBuffer()], d.name);
-        await takeRom(await Promise.all(roms.map(get)));
-      });
+      $('btnFolderRom').addEventListener('click', () => busy($('btnFolderRom'), 'Loading…', async () => takeRom(await Promise.all(roms.map(fetchFile)))));
     }
     if (!list.length) return;
     $('localRow').hidden = false;
-    $('localDisks').innerHTML = list.map((d) => `<option value="${d.name}">${d.name}</option>`).join('');
-    $('btnLocalProfile').addEventListener('click', async () => {
-      const name = $('localDisks').value;
-      const bytes = new Uint8Array(await (await fetch('/media/' + encodeURIComponent(name))).arrayBuffer());
-      profile = { name, bytes }; floppy = null;
-      $('profileName').textContent = `ProFile: ${name} (${(bytes.length / 1048576).toFixed(1)} MB)`;
-      $('floppyName').textContent = 'Choose or drop a DiskCopy 4.2 image…';
-      $('romBoot').value = 'profile';
-      showRom(); log(`Mounted ProFile ${name}`);
-      await newMachine(); canvas.focus();
-    });
-    $('btnLocal').addEventListener('click', async () => {
-      const name = $('localDisks').value;
-      const bytes = new Uint8Array(await (await fetch('/media/' + encodeURIComponent(name))).arrayBuffer());
-      await takeFloppy(new File([bytes], name));
-      await newMachine(); canvas.focus();
-    });
+    $('localDisks').innerHTML = list.map((d) => `<option value="${d.name}">${d.name} (${fmtSize(d.size)}, ${classify(d.name, d.size) === 'profile' ? 'hard disk' : 'floppy'})</option>`).join('');
+    $('btnInsertLocal').addEventListener('click', () => busy($('btnInsertLocal'), 'Loading…', async () => {
+      const d = list.find((x) => x.name === $('localDisks').value);
+      const f = await fetchFile(d);
+      await (classify(d.name, d.size) === 'profile' ? takeProfile(f) : takeFloppy(f));
+    }));
   } catch { /* no media server */ }
 })();
 
@@ -283,7 +344,7 @@ $('btnRevert').addEventListener('click', async () => {
   }
   clearTimeout(revertArmed); revertArmed = 0; $('btnRevert').textContent = 'Revert disks';
   for (const [kind, m] of [['profile', profile], ['floppy', floppy]]) if (m) await idbDel(diskKey(kind, m));
-  $('saveState').textContent = 'reverted'; log('Saved disk changes discarded; booting the original disks.');
+  $('saveState').textContent = 'reverted'; log('Saved disk changes discarded; starting from the original disks.');
   const was = $('keepChanges').checked; $('keepChanges').checked = false;
   await newMachine(); $('keepChanges').checked = was; canvas.focus();
 });
@@ -316,13 +377,6 @@ const b64 = {
   enc: (u8) => { let s = ''; for (const b of u8) s += String.fromCharCode(b); return btoa(s); },
   dec: (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0)),
 };
-function showRom() {
-  $('romState').textContent = rom ? 'loaded' : 'none';
-  $('romName').textContent = rom ? rom.name : 'Optional: your Lisa boot ROM (16 KB, or .lo + .hi)…';
-  $('btnForgetRom').hidden = !rom;
-  $('btnBootFloppy').textContent = rom ? 'Power on' : 'Boot floppy';
-  $('btnBootFloppy').disabled = !(floppy || rom || profile);
-}
 async function takeRom(files) {
   files = [...files];
   if (files.length === 2) { // a lo/hi EPROM pair, told apart by file name
@@ -335,25 +389,32 @@ async function takeRom(files) {
     rom = { name: files[0].name, rom: new Uint8Array(await files[0].arrayBuffer()) };
     store.set('rom', { name: rom.name, bin: b64.enc(rom.rom) });
   } else { log('Choose one ROM file, or a .lo and a .hi pair.'); return; }
-  showRom(); log(`Boot ROM ${rom.name} chosen`);
+  chooseBootFrom(); renderSlots(); log(`Boot ROM ${rom.name} chosen`);
 }
 {
   const saved = store.get('rom', null);
   try {
     if (saved) rom = { name: saved.name, rom: saved.bin ? b64.dec(saved.bin) : { lo: b64.dec(saved.lo), hi: b64.dec(saved.hi) } };
   } catch { rom = null; }
-  showRom();
 }
-$('fileRom').addEventListener('change', (e) => takeRom(e.target.files));
-$('btnForgetRom').addEventListener('click', () => { rom = null; store.set('rom', null); showRom(); log('Boot ROM forgotten.'); });
-$('dropRom').addEventListener('dragover', (e) => { e.preventDefault(); $('dropRom').classList.add('drag'); });
-$('dropRom').addEventListener('dragleave', () => $('dropRom').classList.remove('drag'));
-$('dropRom').addEventListener('drop', (e) => { e.preventDefault(); $('dropRom').classList.remove('drag'); takeRom(e.dataTransfer.files); });
+$('btnRom').addEventListener('click', () => $('fileRom').click());
+$('fileRom').addEventListener('change', (e) => { takeRom(e.target.files); e.target.value = ''; });
+$('btnForgetRom').addEventListener('click', () => { rom = null; store.set('rom', null); renderSlots(); log('Boot ROM forgotten.'); });
+
+// ---- collapsible cards, remembered per browser ------------------------------------------------
+
+{
+  const open = store.get('cards', {});
+  for (const d of document.querySelectorAll('details[data-card]')) {
+    if (open[d.dataset.card] !== undefined) d.open = open[d.dataset.card];
+    d.addEventListener('toggle', () => { const s = store.get('cards', {}); s[d.dataset.card] = d.open; store.set('cards', s); });
+  }
+}
+renderSlots();
 
 // ---- machine controls -------------------------------------------------------------------
 
 $('btnPause').addEventListener('click', () => { paused = !paused; $('btnPause').textContent = paused ? 'Resume' : 'Pause'; });
-$('btnReset').addEventListener('click', async () => { await newMachine(); canvas.focus(); });
 $('speed').addEventListener('change', (e) => { speed = +e.target.value; });
 $('sound').addEventListener('change', () => { audio?.resume(); updateSound(); });
 $('btnType').addEventListener('click', () => { lisa?.type($('pasteText').value); canvas.focus(); });
@@ -406,18 +467,18 @@ window.lisaAuto = {
   async boot(src, name = 'disk.dc42') {
     const bytes = typeof src === 'string' ? new Uint8Array(await (await fetch(src)).arrayBuffer()) : src;
     floppy = { name: typeof src === 'string' ? decodeURIComponent(src.split('/').pop()) : name, bytes };
-    $('floppyName').textContent = floppy.name; showRom();
+    chooseBootFrom('floppy'); renderSlots();
     return newMachine();
   },
   /** Mount a ProFile image (URL or bytes) and boot from it (through the ROM if one is set). */
   async bootProfile(src, name = 'profile.image') {
     const bytes = typeof src === 'string' ? new Uint8Array(await (await fetch(src)).arrayBuffer()) : src;
     profile = { name: typeof src === 'string' ? decodeURIComponent(src.split('/').pop()) : name, bytes }; floppy = null;
-    $('romBoot').value = 'profile'; showRom();
+    chooseBootFrom('profile'); renderSlots();
     return newMachine();
   },
   /** Choose a boot ROM (16 KB Uint8Array, or {lo, hi}); the next boot() powers on through it. */
-  setROM(r, name = 'rom') { rom = { name, rom: r }; showRom(); },
+  setROM(r, name = 'rom') { rom = { name, rom: r }; renderSlots(); },
   /** Persist guest disk changes now; returns the ProFile as the guest left it. */
   async saveDisks() { await saveDisks(); return lisa?.exportProfile() ?? null; },
   snapshot: () => lisa.snapshot(),

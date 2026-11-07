@@ -24,10 +24,10 @@ make                                   # -> dist/lisa-core.mjs + dist/lisa-core.
 node serve.mjs --media "/path/to/disk images"   # http://127.0.0.1:8080/
 ```
 
-`--media` is optional: it lists the disk images in that folder inside the UI (*Load* inserts one as a floppy,
-*As ProFile* mounts it as a hard disk), and a *Use ROM from
-folder* button appears if the folder holds boot ROM files (`.bin`/`.rom`/`.lo`/`.hi`; a pair is told
-apart by `.lo`/`.hi` or the 341-0175/0176 part numbers). The server only listens on loopback.
+`--media` is optional: it lists the disk images in that folder inside the UI (*Insert* puts one in the Floppy
+slot, or the Hard disk slot if it is big enough to be a ProFile), and a *Use ROM from folder* button appears
+if the folder holds boot ROM files (`.bin`/`.rom`/`.lo`/`.hi`; a pair is told apart by `.lo`/`.hi` or the
+341-0175/0176 part numbers). The server only listens on loopback.
 
 Headless:
 
@@ -77,7 +77,7 @@ the two 8 KB EPROM dumps: `lo` holds the odd-addressed bytes, `hi` the even ones
 the image must start `00 00 04 80` (otherwise it is rejected rather than run). A 3A ROM switches the
 display to the XL screen, 608×431 (MacWorks only). CLI: `--rom file` or `--rom name.lo,name.hi`.
 
-In the browser UI, choose the ROM in the *Boot ROM* card. It is remembered in this browser's local
+In the browser UI, choose the ROM in the *Boot ROM* card, or drop it on the screen. It is remembered in this browser's local
 storage only (never uploaded) and can be forgotten with one click.
 
 **Status of ROM boot: verified with a real 2.H ROM** (341-0175-H / 341-0176-H, checksum valid):
@@ -124,8 +124,20 @@ lisa.flushDisks();
 
 In the browser UI, changes are saved to IndexedDB (every 15 s, when the tab is hidden, and on close) and
 used instead of the original the next time you load the same disk (matched by name and size). The
-*Disk changes* card has *Download ProFile/floppy*, a *Keep changes* switch, and *Revert disks* (two clicks).
-*Save state* / *Load state* store the whole machine (one slot).
+*Changes the Lisa makes to disks* section (in the *Disks* card) has *Download*, a *Keep them in this browser*
+switch, and *Revert disks* (two clicks). *Save state* / *Load state* (in the *Power* card) store the whole
+machine (one slot).
+
+### The controls panel
+
+- **Power**: one *Power on* button (it becomes *Restart* once a machine exists) and a *Boot from* selector
+  (floppy, hard disk, or the ROM's startup menu). The same with or without a boot ROM; a line of text says
+  what pressing it will do. Pause, screenshot, save/load state, speed and sound are here too.
+- **Disks**: a *Floppy* slot and a *Hard disk* slot, each with Choose and Eject. Loading a disk only fills
+  its slot; it never starts the machine. Drop files on a slot to load it, or on the screen to sort them
+  (ROM / hard disk / floppy, by name and size) and power on.
+- **Boot ROM**, **Display**, **Keyboard**, **Log** and **Scripting** are collapsible cards; which are open
+  is remembered.
 
 ## MCP server (for AI agents)
 

@@ -27,121 +27,137 @@
     </section>
 
     <aside class="panel" id="panel">
-      <section class="card">
-        <h2>Boot ROM <span class="renderer" id="romState">none</span></h2>
-        <label class="file" id="dropRom">
-          <input type="file" id="fileRom" multiple hidden>
-          <span id="romName">Optional: your Lisa boot ROM (16 KB, or .lo + .hi)…</span>
-        </label>
-        <div class="row">
-          <label class="inline">After power-on
-            <select id="romBoot">
-              <option value="floppy">boot floppy</option>
-              <option value="profile">boot hard disk</option>
-              <option value="none">stop at ROM menu</option>
-            </select>
-          </label>
-          <button id="btnFolderRom" hidden>Use ROM from folder</button>
-          <button id="btnForgetRom" hidden>Forget ROM</button>
-        </div>
-        <p class="note">Without a ROM the emulator boots floppies directly (ROM-less). ROMs are not included; a ROM you choose stays in this browser only.</p>
-      </section>
 
-      <section class="card">
-        <h2>Floppy disk</h2>
-        <label class="file" id="dropFloppy">
-          <input type="file" id="fileFloppy" accept=".dc42,.dc,.img,.image,.dsk,.raw,*/*" hidden>
-          <span id="floppyName">Choose or drop a DiskCopy 4.2 image…</span>
-        </label>
-        <div class="row" id="localRow" hidden>
-          <select id="localDisks" aria-label="Local disk images"></select>
-          <button id="btnLocal" title="Insert as a floppy and boot it">Load</button>
-          <button id="btnLocalProfile" title="Mount as a ProFile hard disk and boot from it">As ProFile</button>
+      <details class="card" data-card="power" open>
+        <summary>Power <span class="meta" id="saveState"></span></summary>
+        <div class="card-body">
+          <div class="row power-row">
+            <button class="primary big" id="btnPower" disabled>Power on</button>
+            <label class="bootfrom">Boot from
+              <select id="bootFrom" disabled aria-describedby="bootHint"></select>
+            </label>
+          </div>
+          <p class="note" id="bootHint">Add a floppy or a hard disk to begin.</p>
+          <div class="row">
+            <button id="btnPause" disabled>Pause</button>
+            <button id="btnShot" disabled>Screenshot</button>
+            <button id="btnSaveState" disabled title="Save the whole machine, to resume later">Save state</button>
+            <button id="btnLoadState" title="Resume the saved machine">Load state</button>
+          </div>
+          <div class="row">
+            <label class="inline">Speed
+              <select id="speed">
+                <option value="0.25">¼×</option><option value="0.5">½×</option>
+                <option value="1" selected>1×</option><option value="2">2×</option>
+                <option value="4">4×</option><option value="8">8×</option>
+              </select>
+            </label>
+            <label class="inline"><input type="checkbox" id="sound"> Sound</label>
+          </div>
         </div>
-        <div class="row">
-          <button class="primary" id="btnBootFloppy" disabled>Boot floppy</button>
-          <button id="btnProfile">ProFile…</button>
-          <input type="file" id="fileProfile" hidden>
-        </div>
-        <p class="note" id="profileName"></p>
-      </section>
+      </details>
 
-      <section class="card">
-        <h2>Disk changes <span class="renderer" id="saveState">—</span></h2>
-        <label class="inline"><input type="checkbox" id="keepChanges" checked> Keep changes in this browser</label>
-        <div class="row">
-          <button id="btnDlProfile" disabled>Download ProFile</button>
-          <button id="btnDlFloppy" disabled>Download floppy</button>
-          <button id="btnRevert" disabled>Revert disks</button>
-        </div>
-        <p class="note">What the Lisa writes to a disk is saved here and used the next time you load the same disk. Revert discards it.</p>
-      </section>
+      <details class="card" data-card="disks" open>
+        <summary>Disks</summary>
+        <div class="card-body">
+          <div class="slot" id="slotFloppy">
+            <span class="slot-label">Floppy</span>
+            <span class="slot-info"><span class="slot-name empty" id="floppyName">empty</span><small class="slot-size" id="floppySize"></small></span>
+            <button id="btnFloppy">Choose…</button>
+            <button id="btnEjectFloppy" class="icon" title="Eject" aria-label="Eject floppy" disabled>⏏</button>
+            <input type="file" id="fileFloppy" hidden>
+          </div>
+          <div class="slot" id="slotProfile">
+            <span class="slot-label">Hard disk</span>
+            <span class="slot-info"><span class="slot-name empty" id="profileName">empty</span><small class="slot-size" id="profileSize"></small></span>
+            <button id="btnProfile">Choose…</button>
+            <button id="btnEjectProfile" class="icon" title="Remove" aria-label="Remove hard disk" disabled>⏏</button>
+            <input type="file" id="fileProfile" hidden>
+          </div>
+          <div class="row" id="localRow" hidden>
+            <select id="localDisks" aria-label="Disk images in the media folder"></select>
+            <button id="btnInsertLocal" title="Put it in the floppy slot, or the hard disk slot if it is big enough to be a ProFile">Insert</button>
+          </div>
+          <p class="note">Drop a disk image anywhere on the screen to load it and power on.</p>
 
-      <section class="card">
-        <h2>Machine</h2>
-        <div class="row">
-          <button id="btnPause" disabled>Pause</button>
-          <button id="btnReset" disabled>Reset</button>
-          <button id="btnShot" disabled>Screenshot</button>
-          <button id="btnSaveState" disabled title="Save the whole machine, to resume later">Save state</button>
-          <button id="btnLoadState" title="Resume the saved machine">Load state</button>
+          <details class="sub" data-card="changes">
+            <summary>Changes the Lisa makes to disks</summary>
+            <label class="inline"><input type="checkbox" id="keepChanges" checked> Keep them in this browser</label>
+            <div class="row">
+              <button id="btnDlFloppy" disabled>Download floppy</button>
+              <button id="btnDlProfile" disabled>Download hard disk</button>
+              <button id="btnRevert" disabled>Revert disks</button>
+            </div>
+            <p class="note">Saved changes are used the next time you load the same disk. Revert discards them.</p>
+          </details>
         </div>
-        <div class="row">
-          <label class="inline">Speed
-            <select id="speed">
-              <option value="0.25">¼×</option><option value="0.5">½×</option>
-              <option value="1" selected>1×</option><option value="2">2×</option>
-              <option value="4">4×</option><option value="8">8×</option>
-            </select>
-          </label>
-          <label class="inline"><input type="checkbox" id="sound"> Sound</label>
+      </details>
+
+      <details class="card" data-card="rom" open>
+        <summary>Boot ROM <span class="meta" id="romState">none</span></summary>
+        <div class="card-body">
+          <div class="slot" id="slotRom">
+            <span class="slot-label">ROM</span>
+            <span class="slot-info"><span class="slot-name empty" id="romName">none</span><small class="slot-size" id="romSize"></small></span>
+            <button id="btnRom">Choose…</button>
+            <button id="btnForgetRom" class="icon" title="Forget this ROM" aria-label="Forget ROM" disabled>✕</button>
+            <input type="file" id="fileRom" multiple hidden>
+          </div>
+          <div class="row"><button id="btnFolderRom" hidden>Use ROM from folder</button></div>
+          <p class="note">Optional. Without one, disks boot directly. A ROM is a 16 KB file, or a .lo and a .hi pair. ROMs are not included; one you choose stays in this browser only.</p>
         </div>
-      </section>
+      </details>
 
-      <section class="card">
-        <h2>Display <span class="renderer" id="renderer"></span></h2>
-        <div class="row">
-          <label class="inline">Aspect
-            <select id="aspect"></select>
-          </label>
-          <label class="inline">Effect
-            <select id="fxPreset">
-              <option value="clean">Clean</option><option value="soft">Soft CRT</option>
-              <option value="crt">Strong CRT</option><option value="custom">Custom</option>
-            </select>
-          </label>
+      <details class="card" data-card="display">
+        <summary>Display <span class="meta" id="renderer"></span></summary>
+        <div class="card-body">
+          <div class="row">
+            <label class="inline">Aspect <select id="aspect"></select></label>
+            <label class="inline">Effect
+              <select id="fxPreset">
+                <option value="clean">Clean</option><option value="soft">Soft CRT</option>
+                <option value="crt">Strong CRT</option><option value="custom">Custom</option>
+              </select>
+            </label>
+          </div>
+          <details class="sub tune" data-card="tune">
+            <summary>Tune</summary>
+            <label class="slider">Curvature <input type="range" id="fxCurve" min="0" max="0.2" step="0.005"></label>
+            <label class="slider">Scanlines <input type="range" id="fxScan" min="0" max="1" step="0.05"></label>
+            <label class="slider">Glow <input type="range" id="fxGlow" min="0" max="1" step="0.05"></label>
+            <label class="slider">Mask <input type="range" id="fxMask" min="0" max="1" step="0.05"></label>
+            <label class="slider">Vignette <input type="range" id="fxVig" min="0" max="1" step="0.05"></label>
+          </details>
         </div>
-        <details class="tune">
-          <summary>Tune</summary>
-          <label class="slider">Curvature <input type="range" id="fxCurve" min="0" max="0.2" step="0.005"></label>
-          <label class="slider">Scanlines <input type="range" id="fxScan" min="0" max="1" step="0.05"></label>
-          <label class="slider">Glow <input type="range" id="fxGlow" min="0" max="1" step="0.05"></label>
-          <label class="slider">Mask <input type="range" id="fxMask" min="0" max="1" step="0.05"></label>
-          <label class="slider">Vignette <input type="range" id="fxVig" min="0" max="1" step="0.05"></label>
-        </details>
-      </section>
+      </details>
 
-      <section class="card">
-        <h2>Type text</h2>
-        <textarea id="pasteText" rows="3" placeholder="Text typed on the Lisa keyboard (Enter = Return)"></textarea>
-        <div class="row"><button id="btnType" disabled>Type it</button></div>
-      </section>
+      <details class="card" data-card="keyboard">
+        <summary>Keyboard</summary>
+        <div class="card-body">
+          <textarea id="pasteText" rows="3" placeholder="Text to type on the Lisa keyboard (Enter = Return)"></textarea>
+          <div class="row"><button id="btnType" disabled>Type it</button></div>
+        </div>
+      </details>
 
-      <section class="card">
-        <h2>Script it</h2>
-        <p class="note">The page exposes <code>window.lisaAuto</code>. Open the browser console:</p>
-        <pre class="code" id="snippet">await lisaAuto.pause();               // stop real-time running
+      <details class="card" data-card="log" open>
+        <summary>Log</summary>
+        <div class="card-body"><pre class="log" id="log" aria-live="polite"></pre></div>
+      </details>
+
+      <details class="card" data-card="script">
+        <summary>Scripting</summary>
+        <div class="card-body">
+          <p class="note">The page exposes <code>window.lisaAuto</code>. In the browser console:</p>
+          <pre class="code" id="snippet">await lisaAuto.boot('/media/disk.dc42');
+lisaAuto.pause();                    // stop real-time running
 lisaAuto.type('hello\n');
-await lisaAuto.click(600, 216);       // Lisa pixels
-await lisaAuto.run(2000);             // 2 s of Lisa time
-lisaAuto.screenshot();                // PNG data URL
-lisaAuto.ascii();                     // screen as text</pre>
-      </section>
+await lisaAuto.click(600, 216);      // Lisa pixels
+await lisaAuto.run(2000);            // 2 s of Lisa time
+lisaAuto.screenshot();               // PNG data URL
+lisaAuto.ascii();                    // the screen as text</pre>
+        </div>
+      </details>
 
-      <section class="card">
-        <h2>Messages</h2>
-        <pre class="log" id="log" aria-live="polite"></pre>
-      </section>
     </aside>
   </main>
 

@@ -468,7 +468,7 @@ async function fetchRom(id) {
       return new File([await res.arrayBuffer()], f.file);
     };
     const [lo, hi] = await Promise.all([get(r.lo), get(r.hi)]);
-    await takeRom([lo, hi], `${r.label} (bitsavers)`);
+    await takeRom([lo, hi], `${r.label} (${new URL(romCatalog.source).host})`);
     return true;
   } catch (e) {
     log(`Could not download the boot ROM: ${e.message}. Disks will boot without one.`);

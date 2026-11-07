@@ -336,7 +336,8 @@ export class Lisa {
   /** Connect a serial port ('a' or 'b') to the host. Call before booting. */
   serialAttach(port) { this._c('serial_attach', null, ['number', 'number'], [this._port(port), 1]); }
 
-  /** Send bytes (string or Uint8Array) to the Lisa on a serial port. Returns bytes accepted. */
+  /** Send bytes (string or Uint8Array) to the Lisa on a serial port. They are queued (64 KB) and delivered as the
+   * guest reads them, so call run() for them to arrive; serialBacklog() says how many are still waiting. */
   serialWrite(port, data) {
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
     const ptr = this.core._malloc(bytes.length || 1);
@@ -345,6 +346,9 @@ export class Lisa {
     this.core._free(ptr);
     return n;
   }
+
+  /** Bytes sent with serialWrite that the guest has not received yet. */
+  serialBacklog(port) { return this._c('serial_backlog', 'number', ['number'], [this._port(port)]); }
 
   /** Read whatever the Lisa has transmitted on a serial port. Returns a Uint8Array. */
   serialRead(port) { return this._drain('serial_read', this._port(port)); }

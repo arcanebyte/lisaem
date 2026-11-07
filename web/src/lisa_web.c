@@ -146,7 +146,30 @@ void connect_serial_devices(void)
 }
 
 char read_serial_port_terminal(unsigned int port) { return (char)fliflo_buff_get(&SCC_READ[port]); }
-void write_serial_port_terminal(unsigned int port, char data) { fliflo_buff_add(&SCC_WRITE[port], (uint8)data); }
+/* The SCC's own FIFOs are only 2 bytes (as on the real chip), so the host talks to them through two
+   bigger rings per port: bytes the host sends wait in ser_in until the SCC can take them, and bytes the
+   Lisa transmits are collected in ser_out until the host reads them. Nothing is dropped unless a ring
+   (64 KB) overflows. Both live in the heap, so snapshots include them. */
+#define SER_RING 65536
+static uint8_t ser_in[2][SER_RING], ser_out[2][SER_RING];
+static unsigned ser_in_h[2], ser_in_t[2], ser_out_h[2], ser_out_t[2];
+
+void write_serial_port_terminal(unsigned int port, char data)
+{
+  if (port > 1 || ser_out_h[port] - ser_out_t[port] >= SER_RING)
+    return;
+  ser_out[port][ser_out_h[port]++ % SER_RING] = (uint8_t)data;
+}
+
+/* Move waiting host bytes into the SCC receive FIFO as the guest makes room. */
+static void serial_pump(void)
+{
+  int ch;
+  for (ch = 0; ch < 2; ch++)
+    while (ser_in_t[ch] != ser_in_h[ch] && !fliflo_buff_is_full(&SCC_READ[ch]))
+      fliflo_buff_add(&SCC_READ[ch], ser_in[ch][ser_in_t[ch]++ % SER_RING]);
+}
+static int serial_pending(void) { return ser_in_t[0] != ser_in_h[0] || ser_in_t[1] != ser_in_h[1]; }
 void init_terminal_serial_port(int port) { (void)port; }
 
 /* Serial backends that need an OS (pty, tty, shell, telnet) are not available. */
@@ -193,13 +216,14 @@ LISA_API void lisa_serial_attach(int port, int enable)
   connect_serial_devices();
 }
 
-/* Send bytes to the Lisa's serial receiver. Returns the number accepted (the receive
-   FIFO is finite: call again with the remainder after running the machine a bit). */
+/* Send bytes to the Lisa's serial receiver. They are queued (up to 64 KB) and fed to the SCC as the guest
+   reads them, so a long message is fine; run the machine for it to be received. Returns the number queued. */
 LISA_API int lisa_serial_write(int port, const uint8_t *data, int len)
 {
   int ch = SCC_CH(port), n = 0;
-  while (n < len && !fliflo_buff_is_full(&SCC_READ[ch]))
-    fliflo_buff_add(&SCC_READ[ch], data[n++]);
+  while (n < len && ser_in_h[ch] - ser_in_t[ch] < SER_RING)
+    ser_in[ch][ser_in_h[ch]++ % SER_RING] = data[n++];
+  serial_pump();
   return n;
 }
 
@@ -207,9 +231,16 @@ LISA_API int lisa_serial_write(int port, const uint8_t *data, int len)
 LISA_API int lisa_serial_read(int port, uint8_t *dst, int max)
 {
   int ch = SCC_CH(port), n = 0;
-  while (n < max && fliflo_buff_has_data(&SCC_WRITE[ch]))
-    dst[n++] = fliflo_buff_get(&SCC_WRITE[ch]);
+  while (n < max && ser_out_t[ch] != ser_out_h[ch])
+    dst[n++] = ser_out[ch][ser_out_t[ch]++ % SER_RING];
   return n;
+}
+
+/* Bytes the host has sent that the guest has not yet received, per port (0 = A, 1 = B). */
+LISA_API int lisa_serial_backlog(int port)
+{
+  int ch = SCC_CH(port);
+  return (int)(ser_in_h[ch] - ser_in_t[ch]);
 }
 
 /* Drain the HLE/LPW console output text. Returns the number of bytes copied. */
@@ -412,6 +443,8 @@ LISA_API int lisa_boot_romless(int from_profile)
 
 static void mouse_pump(void);
 static void rom_autoboot_pump(void);
+static void serial_pump(void);
+static int serial_pending(void);
 
 #define STATUS_POWERED_OFF 1
 #define STATUS_REBOOTED 2
@@ -430,6 +463,8 @@ LISA_API int lisa_run(int cycles)
     int32 want = (int32)(target - cpu68k_clocks);
     if (want > 25000)
       want = 25000; /* ~5 ms slices so keys and mouse keep flowing */
+    if (serial_pending() && want > 2500)
+      want = 2500; /* 0.5 ms slices while serial input is queued: the SCC FIFO holds just 2 bytes */
 
     /* Learn which OS is running: it tells the COPS where that OS keeps its mouse position. */
     if (cpu68k_clocks >= next_os_check)
@@ -439,6 +474,7 @@ LISA_API int lisa_run(int cycles)
     }
 
     rom_autoboot_pump();
+    serial_pump();
     keyq_pump();
     mouse_pump();
     seek_mouse_event();

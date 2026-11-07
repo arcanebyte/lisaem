@@ -17,6 +17,8 @@ import { resolve, join, sep, basename } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Lisa, KEY } from '../js/lisa.js';
 
+// stdout carries only protocol messages: anything that tries to print there goes to stderr instead.
+console.log = console.error;
 const VERSION = '0.1.0';
 const argv = process.argv.slice(2);
 const multi = (name) => argv.flatMap((a, i) => (a === '--' + name && argv[i + 1] ? [argv[i + 1]] : []));
@@ -178,7 +180,8 @@ tool('lisa_status', 'What the machine is doing: emulated time, running OS, how i
 });
 
 tool('lisa_run', 'Advance the Lisa by an exact amount of emulated time (it runs much faster than real time). Use it to let things boot or animate.',
-  { ms: { type: 'number', description: 'milliseconds of Lisa time, 1 to 600000' }, ...SHOT }, ['ms'], async (a) => {
+  { ms: { type: 'number', minimum: 1, maximum: 600000, description: 'milliseconds of Lisa time, 1 to 600000' }, ...SHOT }, ['ms'], async (a) => {
+    need();
     const ms = Math.max(1, Math.min(600000, num(a.ms, 1000)));
     const notes = runChecked(ms);
     return report(a, notes);
@@ -187,7 +190,7 @@ tool('lisa_run', 'Advance the Lisa by an exact amount of emulated time (it runs 
 tool('lisa_screenshot',
   'See the Lisa\'s screen (720x364, black and white). By default it is shown with corrected proportions; use scale 2 to make small text legible.',
   {
-    scale: { type: 'number', description: 'integer enlargement 1-4 (default 1)' },
+    scale: { type: 'number', minimum: 1, maximum: 4, description: 'integer enlargement 1-4 (default 1)' },
     aspect_correct: { type: 'boolean', description: 'stretch to the Lisa\'s real pixel shape (default true)' },
     crop: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } }, required: ['x', 'y', 'w', 'h'], description: 'only this rectangle, in Lisa screen pixels' },
     ascii: { type: 'boolean', description: 'also return a rough text rendering' },
@@ -210,7 +213,7 @@ tool('lisa_type', 'Type text on the Lisa keyboard. A newline is Return. Time adv
 const KEYNAMES = Object.keys(KEY).filter((k) => !/^\d$/.test(k));
 tool('lisa_key',
   'Press keys together, hold them, then release (a chord such as ["COMMAND","S"], or a single key). Names: ' + KEYNAMES.join(', ') + ', and the digits 0-9. COMMAND is the Apple key.',
-  { keys: { type: 'array', items: { type: 'string' } }, hold_ms: { type: 'number', description: 'default 120' }, ...SHOT }, ['keys'], async (a) => {
+  { keys: { type: 'array', minItems: 1, items: { type: 'string' } }, hold_ms: { type: 'number', minimum: 0, maximum: 60000, description: 'default 120' }, ...SHOT }, ['keys'], async (a) => {
     need();
     const codes = a.keys.map((k) => { const c = KEY[String(k).toUpperCase()]; if (c === undefined) throw new Error(`unknown key "${k}"`); return c; });
     for (const c of codes) lisa.key(c, true);
@@ -221,7 +224,7 @@ tool('lisa_key',
   });
 
 tool('lisa_click', 'Click (or double-click) at a point on the screen, in Lisa pixels (0-719, 0-363). Moves the pointer there first and waits for it to arrive.',
-  { x: { type: 'number' }, y: { type: 'number' }, double: { type: 'boolean' }, ...SHOT }, ['x', 'y'], async (a) => {
+  { x: { type: 'number', minimum: 0, maximum: 719 }, y: { type: 'number', minimum: 0, maximum: 430 }, double: { type: 'boolean' }, ...SHOT }, ['x', 'y'], async (a) => {
     need();
     const arrived = a.double ? lisa.doubleClick(a.x, a.y) : lisa.click(a.x, a.y);
     const notes = runChecked(300);
@@ -229,7 +232,7 @@ tool('lisa_click', 'Click (or double-click) at a point on the screen, in Lisa pi
   });
 
 tool('lisa_mouse', 'Move the pointer, or press / release the button at a point (for drags and menus).',
-  { x: { type: 'number' }, y: { type: 'number' }, action: { type: 'string', enum: ['move', 'down', 'up'] }, ...SHOT }, ['x', 'y', 'action'], async (a) => {
+  { x: { type: 'number', minimum: 0, maximum: 719 }, y: { type: 'number', minimum: 0, maximum: 430 }, action: { type: 'string', enum: ['move', 'down', 'up'] }, ...SHOT }, ['x', 'y', 'action'], async (a) => {
     need();
     if (a.action === 'move') lisa.mouseTo(a.x, a.y);
     else if (a.action === 'down') { lisa.mouseTo(a.x, a.y); lisa.mouseDown(a.x, a.y); }
@@ -238,8 +241,8 @@ tool('lisa_mouse', 'Move the pointer, or press / release the button at a point (
   });
 
 tool('lisa_drag', 'Press at one point, drag to another, release.',
-  { from: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] },
-    to: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] }, ...SHOT }, ['from', 'to'], async (a) => {
+  { from: { type: 'object', properties: { x: { type: 'number', minimum: 0, maximum: 719 }, y: { type: 'number', minimum: 0, maximum: 430 } }, required: ['x', 'y'] },
+    to: { type: 'object', properties: { x: { type: 'number', minimum: 0, maximum: 719 }, y: { type: 'number', minimum: 0, maximum: 430 } }, required: ['x', 'y'] }, ...SHOT }, ['from', 'to'], async (a) => {
     need();
     lisa.mouseTo(a.from.x, a.from.y); lisa.mouseDown(a.from.x, a.from.y); lisa.run(150);
     const arrived = lisa.mouseTo(a.to.x, a.to.y); lisa.run(150);
@@ -277,7 +280,7 @@ tool('lisa_registers', 'Read the 68000 registers (D0-D7, A0-A7, PC, SR) and the 
 });
 
 tool('lisa_read_memory', 'Read guest memory as the CPU sees it (hex dump). Context 1 is the normal OS address space.',
-  { address: { type: ['number', 'string'], description: 'number, or hex string like "0x2000"' }, length: { type: 'number', description: '1-4096, default 64' }, context: { type: 'number', description: 'MMU context, default 1' } }, ['address'], async (a) => {
+  { address: { type: ['number', 'string'], description: 'number, or hex string like "0x2000"' }, length: { type: 'number', minimum: 1, maximum: 4096, description: '1-4096, default 64' }, context: { type: 'number', description: 'MMU context, default 1' } }, ['address'], async (a) => {
     need();
     const addr = parseAddr(a.address), len = Math.max(1, Math.min(4096, num(a.length, 64)));
     const bytes = lisa.readMemory(addr, len, num(a.context, 1));
@@ -358,6 +361,42 @@ tool('lisa_export_disk', 'Save a disk exactly as the guest has left it (includin
     return { content: [text(`wrote ${path} (${bytes.length} bytes)`)] };
   });
 
+
+// ---- argument validation ----------------------------------------------------------------------
+// Checks tool arguments against the tool's own inputSchema (the subset of JSON Schema used here) so
+// that a wrong or misspelled argument produces a clear message instead of a silent default or a stack
+// trace. Returns an error string, or null when the value is acceptable.
+
+function typeOf(v) { return v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v; }
+
+function validate(schema, v, path) {
+  const types = [].concat(schema.type ?? []);
+  if (types.length) {
+    const t = typeOf(v);
+    const ok = types.some((want) => want === t || (want === 'number' && t === 'integer'));
+    if (!ok) return `${path} must be ${types.join(' or ')}, got ${t}${typeof v === 'string' ? ` ("${v.slice(0, 30)}")` : ''}`;
+  }
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v)) return `${path} must be a finite number`;
+    if (schema.minimum !== undefined && v < schema.minimum) return `${path} must be at least ${schema.minimum}, got ${v}`;
+    if (schema.maximum !== undefined && v > schema.maximum) return `${path} must be at most ${schema.maximum}, got ${v}`;
+  }
+  if (schema.enum && !schema.enum.includes(v)) return `${path} must be one of ${schema.enum.map((e) => JSON.stringify(e)).join(', ')}, got ${JSON.stringify(v)}`;
+  if (Array.isArray(v)) {
+    if (schema.minItems !== undefined && v.length < schema.minItems) return `${path} needs at least ${schema.minItems} item(s)`;
+    for (let i = 0; i < v.length && schema.items; i++) { const e = validate(schema.items, v[i], `${path}[${i}]`); if (e) return e; }
+  }
+  if (v && typeof v === 'object' && !Array.isArray(v) && schema.properties) {
+    for (const k of schema.required ?? []) if (v[k] === undefined) return `missing required argument ${path ? path + '.' : ''}${k}`;
+    for (const k of Object.keys(v)) {
+      if (!(k in schema.properties)) return `unknown argument ${path ? path + '.' : ''}${k} (valid: ${Object.keys(schema.properties).join(', ') || 'none'})`;
+      const e = validate(schema.properties[k], v[k], `${path ? path + '.' : ''}${k}`);
+      if (e) return e;
+    }
+  }
+  return null;
+}
+
 // ---- MCP protocol ---------------------------------------------------------------------------
 
 const SUPPORTED = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -383,6 +422,8 @@ async function handle(req) {
     case 'tools/call': {
       const t = tools.find((x) => x.name === params.name);
       if (!t) throw Object.assign(new Error(`unknown tool ${params.name}`), { code: -32602 });
+      const bad = validate(t.inputSchema, params.arguments ?? {}, '');
+      if (bad) return { isError: true, content: [text(`invalid arguments for ${t.name}: ${bad}`)] };
       try {
         return await t.run(params.arguments ?? {});
       } catch (e) {
@@ -396,15 +437,30 @@ async function handle(req) {
 
 const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 
+// Answer one JSON-RPC message; returns the response object, or null for a notification.
+async function respond(req) {
+  if (!req || typeof req !== 'object' || typeof req.method !== 'string')
+    return { jsonrpc: '2.0', id: req?.id ?? null, error: { code: -32600, message: 'invalid request' } };
+  if (req.id === undefined) { try { await handle(req); } catch { /* notifications get no reply */ } return null; }
+  try { return { jsonrpc: '2.0', id: req.id, result: await handle(req) }; }
+  catch (e) { return { jsonrpc: '2.0', id: req.id, error: { code: e.code ?? -32603, message: String(e.message || e) } }; }
+}
+
 let chain = Promise.resolve();   // one request at a time: they all share the one machine
 createInterface({ input: process.stdin }).on('line', (line) => {
   if (!line.trim()) return;
-  let req;
-  try { req = JSON.parse(line); } catch { return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }); }
-  if (req.id === undefined) { chain = chain.then(() => handle(req)).catch(() => {}); return; } // notification
+  let msg;
+  try { msg = JSON.parse(line); } catch { return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }); }
   chain = chain.then(async () => {
-    try { send({ jsonrpc: '2.0', id: req.id, result: await handle(req) }); }
-    catch (e) { send({ jsonrpc: '2.0', id: req.id, error: { code: e.code ?? -32603, message: String(e.message || e) } }); }
+    if (Array.isArray(msg)) { // a batch: answer with an array, in order
+      if (!msg.length) return send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'empty batch' } });
+      const out = [];
+      for (const m of msg) { const r = await respond(m); if (r) out.push(r); }
+      if (out.length) send(out);
+    } else {
+      const r = await respond(msg);
+      if (r) send(r);
+    }
   });
 });
 

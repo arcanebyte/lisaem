@@ -184,7 +184,8 @@ s.pixel(x, y); s.inkCount(); s.hash(); s.diff(other);
 s.toAscii(); s.toPNG(); s.toRGBA();
 
 lisa.serialAttach('a');                            // before boot
-lisa.serialWrite('a', 'text'); lisa.serialRead('a');
+lisa.serialWrite('a', 'text'); lisa.serialRead('a');   // queued behind the chip's 2-byte FIFO (64 KB each way)
+lisa.serialBacklog('a');                           // bytes sent but not yet received by the guest
 lisa.registers(); lisa.readMemory(addr, len, ctx); lisa.pointer();
 lisa.sound; lisa.contrast; lisa.messages(); lisa.consoleRead();
 ```

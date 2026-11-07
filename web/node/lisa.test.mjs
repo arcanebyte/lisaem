@@ -250,3 +250,22 @@ test('disks: the emulator works on copies and export returns what the guest wrot
   assert.ok(changed > 0, 'exported image contains the guest writes');
   assert.deepEqual(new Uint8Array(original), before, 'the caller\'s bytes were not modified');
 });
+
+// ---- Serial buffering (no disk needed) -------------------------------------------------------------
+// The SCC's own FIFOs hold 2 bytes, as on the real chip. The host API queues behind them so a long write
+// is accepted whole and delivered as the guest consumes it. (No guest here reads the port, so the FIFO
+// fills and the rest waits; an end-to-end serial exchange with a real guest program is still untested.)
+
+test('serial: long writes are queued, not truncated to the 2-byte chip FIFO', async () => {
+  const lisa = await Lisa.create();
+  lisa.loadROM(syntheticROM());
+  lisa.powerOn();
+  lisa.serialAttach('a');
+  assert.equal(lisa.serialWrite('a', new Uint8Array(1000)), 1000);
+  assert.equal(lisa.serialBacklog('a'), 998, 'two bytes are in the chip, the rest wait');
+  lisa.run(50);
+  assert.equal(lisa.serialBacklog('a'), 998, 'nothing more moves until the guest reads');
+  assert.equal(lisa.serialBacklog('b'), 0, 'ports are independent');
+  assert.equal(lisa.serialRead('a').length, 0);
+  assert.equal(lisa.serialWrite('b', new Uint8Array(70000)), 65536, 'a full queue reports how much it took');
+});

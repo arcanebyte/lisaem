@@ -37,5 +37,6 @@
  "_lisa_flush_disks",
  "_lisa_disk_mode",
  "_lisa_disk_ptr",
- "_lisa_disk_hash"
+ "_lisa_disk_hash",
+ "_lisa_serial_backlog"
 ]

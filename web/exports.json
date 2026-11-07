@@ -38,5 +38,12 @@
  "_lisa_disk_mode",
  "_lisa_disk_ptr",
  "_lisa_disk_hash",
- "_lisa_serial_backlog"
+ "_lisa_serial_backlog",
+ "_lisa_audio_start",
+ "_lisa_audio_stop",
+ "_lisa_audio_render",
+ "_lisa_audio_state",
+ "_lisa_audio_trace",
+ "_lisa_audio_trace_take",
+ "_lisa_set_slice"
 ]

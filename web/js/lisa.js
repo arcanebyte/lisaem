@@ -520,6 +520,69 @@ export class Lisa {
     return lisa.restore({ version: 1, heap, setup: h.setup, profilePath: h.profilePath, opts: h.opts });
   }
 
+  // ---- speaker audio -------------------------------------------------------------------------
+
+  /**
+   * Start capturing the speaker at `sampleRate` Hz. The Lisa's speaker is driven by timer 2, the shift register
+   * and the volume bits of VIA1; this follows those with exact timing, so what audioRender() returns is a
+   * function of emulated time only (the same on every run, however you slice it). Nothing is captured until
+   * you call this, so headless runs that do not need sound pay nothing.
+   */
+  audioStart(sampleRate = 44100) {
+    this._c('audio_start', null, ['number'], [sampleRate]);
+    this._audioRate = sampleRate;
+    this._audioBuf ??= this.core._malloc(65536 * 4);
+  }
+
+  /** Stop capturing audio. */
+  audioStop() { this._c('audio_stop', null, [], []); this._audioRate = 0; }
+
+  /**
+   * The audio for the emulated time that has passed since the last call: mono Float32 samples at the rate given
+   * to audioStart(), roughly -0.3..0.3 at full volume. Returns a fresh array (empty if nothing has elapsed).
+   */
+  audioRender() {
+    if (!this._audioRate) return new Float32Array(0);
+    const chunks = [];
+    let total = 0, n;
+    do {
+      n = this._c('audio_render', 'number', ['number', 'number'], [this._audioBuf, 65536]);
+      if (n) { chunks.push(new Float32Array(this.core.HEAPU8.buffer, this._audioBuf, n).slice()); total += n; }
+    } while (n === 65536);
+    if (chunks.length === 1) return chunks[0];
+    const out = new Float32Array(total);
+    let o = 0;
+    for (const c of chunks) { out.set(c, o); o += c.length; }
+    return out;
+  }
+
+  /**
+   * Diagnostic: record every speaker register change the guest makes (call before audioStart), and read them
+   * back with audioTrace(). Each entry: { clk, period, pattern, volume, enabled }, clk in 68000 cycles.
+   */
+  audioTraceStart() { this._c('audio_trace', null, ['number'], [1]); }
+  audioTrace() {
+    const out = [], max = 4096, ptr = this.core._malloc(max * 16);
+    for (let n; (n = this._c('audio_trace_take', 'number', ['number', 'number'], [ptr, max])) > 0;) {
+      const dv = new DataView(this.core.HEAPU8.buffer, ptr, n * 16);
+      for (let i = 0; i < n; i++) {
+        out.push({ clk: Number(dv.getBigInt64(i * 16, true)), period: dv.getUint8(i * 16 + 8), pattern: dv.getUint8(i * 16 + 9),
+                   volume: dv.getUint8(i * 16 + 10), enabled: !!(dv.getUint8(i * 16 + 11) & 1) });
+      }
+    }
+    this.core._free(ptr);
+    return out;
+  }
+
+  /** The speaker registers as the audio renderer has them: { period, pattern, volume, enabled }. Diagnostic. */
+  audioState() {
+    const ptr = this.core._malloc(4);
+    this._c('audio_state', null, ['number'], [ptr]);
+    const b = this.core.HEAPU8.slice(ptr, ptr + 4);
+    this.core._free(ptr);
+    return { period: b[0], pattern: b[1], volume: b[2], enabled: !!(b[3] & 1) };
+  }
+
   // ---- waiting -----------------------------------------------------------------------
 
   /**

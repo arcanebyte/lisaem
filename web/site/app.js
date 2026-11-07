@@ -124,18 +124,40 @@ function handleStatus(st) {
 
 // ---- main loop --------------------------------------------------------------------------
 
-let audio = null, osc = null;
-function updateSound() {
-  if (!$('sound').checked || !lisa || paused || stopped) { if (osc) osc.frequency.value = 0; if (audio && osc) osc.disconnect(); osc = null; return; }
-  const v = lisa.sound;
-  if (!v) { if (osc) { osc.disconnect(); osc = null; } return; }
-  audio ??= new AudioContext();
-  if (!osc) {
-    osc = audio.createOscillator(); osc.type = 'square';
-    const g = audio.createGain(); g.gain.value = 0.04;
-    osc.connect(g).connect(audio.destination); osc.start();
+// Sound: the core logs every speaker register write with its emulated timestamp and renders PCM from that
+// (Lisa.audioRender); an AudioWorklet plays it back. Only at 1x: at other speeds the audio is rendered and
+// discarded (so the log stays bounded) because pitch-shifted PCM would just be noise.
+const sound = { ctx: null, node: null, loading: null, forMachine: null, stats: null };
+
+async function ensureSound() {
+  if (sound.node) return true;
+  sound.loading ??= (async () => {
+    try {
+      sound.ctx ??= new AudioContext({ latencyHint: 'interactive' });
+      await sound.ctx.audioWorklet.addModule(new URL('audio-worklet.js', import.meta.url));
+      const node = new AudioWorkletNode(sound.ctx, 'lisa-speaker', { numberOfInputs: 0, outputChannelCount: [1], processorOptions: { startMs: 40, maxMs: 250 } });
+      node.port.onmessage = (e) => { sound.stats = e.data; };
+      node.connect(sound.ctx.destination);
+      sound.node = node;
+      return true;
+    } catch (e) {
+      log('Sound is unavailable: ' + (e.message || e));
+      $('sound').checked = false;
+      return false;
+    } finally { sound.loading = null; }
+  })();
+  return sound.loading;
+}
+
+function pumpSound() {
+  if (!lisa) return;
+  if (!$('sound').checked || !sound.node) {
+    if (sound.forMachine === lisa) { lisa.audioStop(); sound.forMachine = null; }
+    return;
   }
-  osc.frequency.value = Math.min(20000, 250000 / (v + 2)); // VIA timer half-period at 500 kHz
+  if (sound.forMachine !== lisa) { lisa.audioStart(sound.ctx.sampleRate); sound.forMachine = lisa; }
+  const pcm = lisa.audioRender();
+  if (pcm.length && speed === 1 && sound.ctx.state === 'running') sound.node.port.postMessage(pcm, [pcm.buffer]);
 }
 
 function frame(ts) {
@@ -144,7 +166,7 @@ function frame(ts) {
   if (lisa && !paused && !stopped) {
     handleStatus(lisa.run(dt * speed));
     drawScreen();
-    updateSound();
+    pumpSound();
   }
   requestAnimationFrame(frame);
 }
@@ -471,8 +493,11 @@ renderSlots();
 // ---- machine controls -------------------------------------------------------------------
 
 $('btnPause').addEventListener('click', () => { paused = !paused; $('btnPause').textContent = paused ? 'Resume' : 'Pause'; });
-$('speed').addEventListener('change', (e) => { speed = +e.target.value; });
-$('sound').addEventListener('change', () => { audio?.resume(); updateSound(); });
+$('speed').addEventListener('change', (e) => { speed = +e.target.value; sound.node?.port.postMessage('flush'); });
+$('sound').addEventListener('change', async (e) => {
+  if (e.target.checked && await ensureSound()) { await sound.ctx.resume(); sound.node.port.postMessage('flush'); sound.forMachine = null; }
+  else if (sound.ctx) sound.node?.port.postMessage('flush');
+});
 $('btnType').addEventListener('click', () => { lisa?.type($('pasteText').value); canvas.focus(); });
 $('btnShot').addEventListener('click', () => {
   const a = document.createElement('a');
@@ -538,6 +563,10 @@ window.lisaAuto = {
   setROM(r, name = 'rom') { rom = { name, rom: r }; renderSlots(); },
   /** Persist guest disk changes now; returns the ProFile as the guest left it. */
   async saveDisks() { await saveDisks(); return lisa?.exportProfile() ?? null; },
+  /** Turn the speaker on/off (the Sound checkbox). Resolves true once audio is playing. */
+  async sound(on = true) { $('sound').checked = on; $('sound').dispatchEvent(new Event('change')); await sound.loading; return on ? !!sound.node && sound.ctx.state === 'running' : true; },
+  /** Playback health: { queued, underruns, dropped, peak, rms } (samples / 0..1), null until the speaker has played. */
+  audioStats: () => (sound.stats ? { ...sound.stats, state: sound.ctx.state, rate: sound.ctx.sampleRate } : null),
   snapshot: () => lisa.snapshot(),
   restore: (s) => lisa.restore(s),
   pause() { paused = true; $('btnPause').textContent = 'Resume'; },

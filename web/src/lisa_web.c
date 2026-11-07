@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -441,6 +442,7 @@ LISA_API int lisa_boot_romless(int from_profile)
  *  API: running                                                                         *
  * ------------------------------------------------------------------------------------ */
 
+static int run_slice = 1000; /* CPU cycles per host step; see lisa_set_slice() for why this is small */
 static void mouse_pump(void);
 static void rom_autoboot_pump(void);
 static void serial_pump(void);
@@ -454,30 +456,42 @@ static int serial_pending(void);
    Lisa time.  Returns a bitmask of STATUS_* flags. */
 LISA_API int lisa_run(int cycles)
 {
-  XTIMER target = cpu68k_clocks + cycles;
-  static XTIMER next_os_check = 0;
+  static XTIMER ideal = 0; /* where the clock would be had no call overshot: carries the overshoot over so that
+                              the emulated time does not depend on how the host chops it into run() calls */
+  XTIMER target;
+  static XTIMER next_os_check = 0, slice_end = 0;
   int status = 0;
+
+  if (ideal + LISA_CYCLES_PER_SECOND < cpu68k_clocks || cpu68k_clocks + LISA_CYCLES_PER_SECOND < ideal) /* first call, or the clock was reset */
+    ideal = cpu68k_clocks;
+  ideal += cycles;
+  target = ideal;
 
   while (cpu68k_clocks < target && !host_powered_off && !host_exit_requested)
   {
-    int32 want = (int32)(target - cpu68k_clocks);
-    if (want > 25000)
-      want = 25000; /* ~5 ms slices so keys and mouse keep flowing */
-    if (serial_pending() && want > 2500)
-      want = 2500; /* 0.5 ms slices while serial input is queued: the SCC FIFO holds just 2 bytes */
+    int32 want;
 
-    /* Learn which OS is running: it tells the COPS where that OS keeps its mouse position. */
-    if (cpu68k_clocks >= next_os_check)
+    /* Work happens on a fixed cadence of run_slice cycles that does not care where run() calls begin and
+       end, so the guest sees the same thing however the host chops up time (a call may end mid-slice, and
+       the next one carries on). */
+    if (cpu68k_clocks >= slice_end)
     {
-      check_running_lisa_os();
-      next_os_check = cpu68k_clocks + LISA_CYCLES_PER_SECOND / 10;
+      /* Learn which OS is running: it tells the COPS where that OS keeps its mouse position. */
+      if (cpu68k_clocks >= next_os_check)
+      {
+        check_running_lisa_os();
+        next_os_check = cpu68k_clocks + LISA_CYCLES_PER_SECOND / 10;
+      }
+
+      rom_autoboot_pump();
+      serial_pump();
+      keyq_pump();
+      mouse_pump();
+      seek_mouse_event();
+      slice_end = cpu68k_clocks + run_slice;
     }
 
-    rom_autoboot_pump();
-    serial_pump();
-    keyq_pump();
-    mouse_pump();
-    seek_mouse_event();
+    want = (int32)((slice_end < target ? slice_end : target) - cpu68k_clocks);
     reg68k_external_execute(want);
 
     if (pc24 & 1)
@@ -488,8 +502,11 @@ LISA_API int lisa_run(int cycles)
         break;
       }
     }
-    get_next_timer_event();
-    seek_mouse_event();
+    if (cpu68k_clocks >= slice_end)
+    {
+      get_next_timer_event();
+      seek_mouse_event();
+    }
   }
 
   if (host_powered_off)
@@ -740,6 +757,186 @@ LISA_API const char *lisa_next_message(void)
 
 LISA_API int lisa_is_powered_off(void) { return host_powered_off; }
 
+
+/* ------------------------------------------------------------------------------------ *
+ *  Speaker audio                                                                        *
+ *                                                                                      *
+ *  The Lisa's speaker is driven by VIA1: timer 2's low byte sets the bit rate, the     *
+ *  8-bit shift register holds the waveform (it is shifted out continuously, so its     *
+ *  pattern is the timbre), and three bits of port B set the volume. A program makes    *
+ *  music by rewriting those three, often hundreds of times a second. The core calls    *
+ *  host_audio_changed() on every such write; we log the new state with the CPU clock   *
+ *  it happened at, and lisa_audio_render() turns the log into PCM sample by sample,    *
+ *  so the audio is exact in *emulated* time and independent of how the host chops it   *
+ *  into buffers (and so identical on every run).                                        *
+ *                                                                                      *
+ *  Two regimes, chosen by what the pattern does to the speaker:                        *
+ *   - Audible tone (the waveform's fundamental is below ~8 kHz: the ROM's chirp, tone  *
+ *     music): the macOS LisaEm patch's model (LisaSpeakerPcm): a +-gain square wave    *
+ *     from the pattern, gain eased toward the volume, AC-coupled, one-pole softened.   *
+ *   - Ultrasonic carrier (e.g. pattern $AA with T2=4, a ~21 kHz square): the speaker   *
+ *     cannot follow the carrier, only its amplitude, so the volume *is* the signal: a  *
+ *     3-bit sample, held between writes, AC-coupled and averaged over 5 samples, as in *
+ *     the alisando project's own offline renderer. This is how that demo plays PCM     *
+ *     music: it writes the volume a few thousand times a second.                       *
+ *  Smoothing constants are time constants, so they do not depend on the sample rate.   *
+ *                                                                                      *
+ *  Nothing is logged until lisa_audio_start(), so headless runs pay nothing.           *
+ * ------------------------------------------------------------------------------------ */
+
+typedef struct
+{
+  int64_t clk;
+  uint8_t period, pattern, volume, flags; /* flags: 1 = shift-out enabled, 2 = 625 kHz VIA clock */
+} audio_event_t;
+
+#define AUDIO_EVENTS 65536
+static audio_event_t aud_ev[AUDIO_EVENTS];
+static unsigned aud_h, aud_t;
+static int aud_rate = 0; /* 0 = audio off */
+#define AUDIO_TRACE_MAX 2000000
+static audio_event_t *aud_trace; /* diagnostic: every event ever logged (while tracing) */
+static unsigned aud_trace_n, aud_trace_read;
+static audio_event_t aud_last;
+
+static struct
+{
+  double phase, gain, dc, filtered;
+  double a_gain, a_dc, a_lpf;
+  double box[5]; /* last 5 AC-coupled carrier-mode samples */
+  unsigned box_i;
+  uint8_t period, pattern, volume, flags;
+  int64_t done; /* samples rendered so far */
+} aud;
+
+static audio_event_t audio_now(void)
+{
+  audio_event_t e;
+  int shifting = (via[1].via[ACR] & 0x10) != 0;
+  e.clk = cpu68k_clocks;
+  e.period = via[1].via[T2LL];
+  e.pattern = via[1].via[SHIFTREG];
+  e.volume = volume & 7;
+  e.flags = (uint8_t)((shifting && e.period && e.pattern ? 1 : 0) | ((floppy_iorom & 0x20) ? 0 : 2));
+  return e;
+}
+
+static void audio_apply(const audio_event_t *e)
+{
+  aud.period = e->period;
+  aud.pattern = e->pattern;
+  aud.volume = e->volume;
+  aud.flags = e->flags;
+}
+
+/* How many bits it takes for the shifted-out pattern to repeat: 1 (constant), 2, 4 or 8. */
+static int audio_pattern_bits(uint8_t p)
+{
+  int per;
+  for (per = 1; per < 8; per *= 2)
+    if ((uint8_t)((p << per) | (p >> (8 - per))) == p)
+      return per;
+  return 8;
+}
+
+/* Called by the core (via6522.c, under LISA_HOST_AUDIO) whenever a sound register changes. */
+void host_audio_changed(void)
+{
+  audio_event_t e;
+  if (!aud_rate)
+    return;
+  e = audio_now();
+  if (e.period == aud_last.period && e.pattern == aud_last.pattern && e.volume == aud_last.volume && e.flags == aud_last.flags)
+    return;
+  aud_last = e;
+  if (aud_trace && aud_trace_n < AUDIO_TRACE_MAX)
+    aud_trace[aud_trace_n++] = e;
+  if (aud_h - aud_t >= AUDIO_EVENTS) /* log full: fold the oldest event into the state so nothing is lost */
+    audio_apply(&aud_ev[aud_t++ % AUDIO_EVENTS]);
+  aud_ev[aud_h++ % AUDIO_EVENTS] = e;
+}
+
+/* A one-pole smoothing coefficient for time constant `tau` seconds at the output rate. */
+static double audio_alpha(double tau) { return 1.0 - exp(-1.0 / (tau * aud_rate)); }
+
+/* Start (or restart) audio at the given output sample rate, from the current emulated time. */
+LISA_API void lisa_audio_start(int rate)
+{
+  audio_event_t e;
+  if (rate < 8000 || rate > 192000)
+    rate = 44100;
+  aud_rate = rate;
+  memset(&aud, 0, sizeof aud);
+  /* Time constants chosen to reproduce the macOS patch's per-sample constants at 44.1 kHz. */
+  aud.a_gain = audio_alpha(1.0 / (44100.0 * -log(1.0 - 0.025)));
+  aud.a_dc = audio_alpha(1.0 / (44100.0 * -log(1.0 - 0.003)));
+  aud.a_lpf = audio_alpha(1.0 / (44100.0 * -log(1.0 - 0.32)));
+  aud_h = aud_t = 0;
+  e = audio_now();
+  aud_last = e;
+  audio_apply(&e);
+  aud.done = (int64_t)((double)cpu68k_clocks * rate / LISA_CYCLES_PER_SECOND); /* no burst of catch-up audio */
+}
+
+LISA_API void lisa_audio_stop(void) { aud_rate = 0; }
+
+/* Render the audio for the emulated time that has passed since the last call, up to `max` samples
+   (mono, float, about +-0.3 at full volume). Returns the number of samples written; call again if it
+   returned `max` and you want the rest. */
+LISA_API int lisa_audio_render(float *out, int max)
+{
+  int64_t available;
+  int n = 0;
+  if (!aud_rate)
+    return 0;
+  available = (int64_t)((double)cpu68k_clocks * aud_rate / LISA_CYCLES_PER_SECOND);
+  while (aud.done < available && n < max)
+  {
+    double clk = (double)aud.done * LISA_CYCLES_PER_SECOND / aud_rate, target, hz, bit_rate, f0, signal;
+    int enabled;
+    while (aud_t != aud_h && (double)aud_ev[aud_t % AUDIO_EVENTS].clk <= clk)
+      audio_apply(&aud_ev[aud_t++ % AUDIO_EVENTS]);
+    enabled = (aud.flags & 1) && aud.pattern && aud.pattern != 255;
+    hz = (aud.flags & 2) ? 625000.0 : 500000.0;
+    bit_rate = hz / (2.0 * (aud.period + 2));
+    f0 = bit_rate / audio_pattern_bits(aud.pattern); /* the waveform's fundamental */
+    if (enabled && f0 >= 8000.0)
+    {
+      /* Ultrasonic carrier: the volume is a 3-bit sample (centred, as the project's own renderer does). */
+      signal = (aud.volume - 3.5) * (0.50 / 3.5);
+      aud.gain = aud.volume * (0.45 / 7.0); /* keep the tone regime's gain continuous if we switch back */
+      aud.dc += aud.a_dc * (signal - aud.dc);
+      aud.box[aud.box_i++ % 5] = signal - aud.dc;
+      aud.filtered = (aud.box[0] + aud.box[1] + aud.box[2] + aud.box[3] + aud.box[4]) / 5.0;
+    }
+    else
+    {
+      target = enabled ? aud.volume * (0.45 / 7.0) : 0.0;
+      aud.gain += aud.a_gain * (target - aud.gain);
+      aud.phase += bit_rate / aud_rate;
+      while (aud.phase >= 8.0)
+        aud.phase -= 8.0;
+      signal = (aud.pattern & (128u >> (unsigned)aud.phase)) ? aud.gain : -aud.gain;
+      aud.dc += aud.a_dc * (signal - aud.dc);
+      aud.filtered += aud.a_lpf * (signal - aud.dc - aud.filtered);
+      aud.box[aud.box_i++ % 5] = 0.0; /* so a later switch to carrier mode starts from silence */
+    }
+    out[n++] = (float)aud.filtered;
+    aud.done++;
+  }
+  return n;
+}
+
+/* Diagnostic: the speaker registers as the renderer currently has them. out[0..3] = timer-2 low (period),
+   shift-register pattern, volume 0-7, flags (1 = shift-out enabled). Call lisa_audio_render() first. */
+LISA_API void lisa_audio_state(uint8_t *out)
+{
+  out[0] = aud.period;
+  out[1] = aud.pattern;
+  out[2] = aud.volume;
+  out[3] = aud.flags;
+}
+
 /* Raw value the guest wrote to the speaker timer (0 = silent). */
 LISA_API int lisa_sound(void) { return host_sound_hz; }
 
@@ -828,3 +1025,36 @@ LISA_API uint32_t lisa_disk_hash(int which)
     h = (h ^ p[i]) * 16777619u;
   return h ? h : 1;
 }
+
+/* Diagnostic: record every audio event (before it is rendered) so a test can compare the register writes the
+   guest made with a reference model. Costs 16 bytes per event, up to 2 million. */
+LISA_API void lisa_audio_trace(int on)
+{
+  if (on && !aud_trace)
+    aud_trace = (audio_event_t *)calloc(AUDIO_TRACE_MAX, sizeof(audio_event_t));
+  aud_trace_n = aud_trace_read = 0;
+  if (!on && aud_trace)
+  {
+    free(aud_trace);
+    aud_trace = NULL;
+  }
+}
+
+/* Copy up to `max` traced events not yet read into dst, 16 bytes each: int64 clk, then period, pattern, volume,
+   flags, and 4 bytes padding. Returns how many were copied. */
+LISA_API int lisa_audio_trace_take(audio_event_t *dst, int max)
+{
+  int n = 0;
+  while (aud_trace && n < max && aud_trace_read < aud_trace_n)
+    dst[n++] = aud_trace[aud_trace_read++];
+  return n;
+}
+
+/* How many CPU cycles lisa_run() executes between servicing input and the parts of the core whose timing is
+   counted in *host calls* rather than CPU cycles. The main one is the floppy controller's busy counter, which
+   seek_mouse_event() decrements once per call, so the slice length sets how long an emulated floppy operation
+   takes. With the old 25,000-cycle slice (5 ms) a floppy load held the CPU's interrupts off long enough that
+   the alisando demo's music stalled, stretching its first scene from 25 s to 31 s; at 1,000 cycles (200 us)
+   the music runs on its own clock, matching the demo's reference mixer to within 1%. 1000 costs no
+   measurable speed. Default 1000. */
+LISA_API void lisa_set_slice(int cycles) { run_slice = cycles < 100 ? 100 : cycles; }

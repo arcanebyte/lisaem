@@ -16,6 +16,7 @@
 //   --shot <file.png>   save a PNG of the final screen
 //   --ascii             print the final screen as text
 //   --ram <kb>          512, 1024 (default) or 2048
+//   --wav <file.wav>    record the speaker (44.1 kHz mono 16-bit) for the whole run
 //   --log               show the emulator core's debug log on stderr
 import { readFileSync, writeFileSync } from 'node:fs';
 import { Lisa } from '../js/lisa.js';
@@ -44,6 +45,9 @@ if (opt('rom')) {
   if (!ok) { console.error('boot failed:', lisa.messages()); process.exit(1); }
 }
 
+const wavOut = opt('wav');
+if (wavOut) lisa.audioStart(44100);
+const pcmChunks = [];
 const seconds = +opt('seconds', 10);
 const text = opt('type') && String(opt('type')).replace(/\\n/g, '\n').replace(/\\t/g, '\t');
 const typeAt = +opt('type-at', Math.min(5, seconds));
@@ -52,12 +56,24 @@ let typed = !text;
 for (let s = 0; s < seconds * 10; s++) {
   if (!typed && lisa.time >= typeAt * 1000) { lisa.type(text); typed = true; }
   const st = lisa.run(100);
+  if (wavOut) pcmChunks.push(lisa.audioRender());
   if (st.poweredOff || st.rebooted || st.fatal) { console.error(`machine stopped (${JSON.stringify(st)}) at ${lisa.time} ms`); break; }
 }
 const wall = ((Date.now() - t0) / 1000).toFixed(2);
 console.error(`ran ${(lisa.time / 1000).toFixed(1)} s of Lisa time in ${wall} s of wall time`);
 for (const m of lisa.messages()) console.error('message:', m);
 const con = lisa.consoleRead(); if (con) console.error('console:', JSON.stringify(con));
+
+if (wavOut) {
+  const n = pcmChunks.reduce((a, c) => a + c.length, 0), wav = Buffer.alloc(44 + n * 2);
+  wav.write('RIFF', 0); wav.writeUInt32LE(36 + n * 2, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(44100, 24); wav.writeUInt32LE(88200, 28);
+  wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(n * 2, 40);
+  let o = 44, peak = 0;
+  for (const c of pcmChunks) for (const v of c) { peak = Math.max(peak, Math.abs(v)); wav.writeInt16LE(Math.round(Math.max(-1, Math.min(1, v)) * 32767), o); o += 2; }
+  writeFileSync(wavOut, wav);
+  console.error(`wrote ${wavOut}: ${(n / 44100).toFixed(1)} s of audio, peak ${peak.toFixed(3)}`);
+}
 
 const screen = lisa.screen();
 console.error(`screen: ${screen.width}x${screen.height}, ${screen.inkCount()} black pixels, hash ${screen.hash().toString(16)}`);

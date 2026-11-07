@@ -22,7 +22,7 @@ INC := -I$(BUILD)/geninc \
        -I$(SRC)/lib/libdc42/include -I$(SRC)/lib/libdc42/src/include \
        -I$(SRC)/lisa/keyboard/include -I$(SRC)/lib/musashi
 
-CFLAGS_WASM := -O2 -w -DLISA_HOST_CLOCK -fno-strict-aliasing -fwrapv \
+CFLAGS_WASM := -O2 -w -DLISA_HOST_CLOCK -DLISA_HOST_AUDIO -fno-strict-aliasing -fwrapv \
                -Wno-incompatible-function-pointer-types $(INC)
 
 GEN_SRCS := $(foreach n,0 1 2 3 4 5 6 7 8 9 a b c d e f,$(GEN)/cpu68k-$(n).c) $(GEN)/tab68k.c

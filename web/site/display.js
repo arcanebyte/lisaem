@@ -13,9 +13,9 @@ export const ASPECTS = {
 };
 
 export const PRESETS = {
-  clean:  { curve: 0,    scan: 0,    glow: 0,    mask: 0,    vignette: 0 },
-  soft:   { curve: 0.04, scan: 0.35, glow: 0.35, mask: 0.12, vignette: 0.25 },
-  crt:    { curve: 0.09, scan: 0.6,  glow: 0.5,  mask: 0.25, vignette: 0.4 },
+  clean:  { curve: 0,    scan: 0,    glow: 0,    mask: 0,    vignette: 0,    border: 0.03 },
+  soft:   { curve: 0.04, scan: 0.35, glow: 0.35, mask: 0.12, vignette: 0.25, border: 0.05 },
+  crt:    { curve: 0.09, scan: 0.6,  glow: 0.5,  mask: 0.25, vignette: 0.4,  border: 0.07 },
 };
 
 const VERT = `#version 300 es
@@ -27,7 +27,7 @@ precision highp float;
 uniform sampler2D uTex;      // R8: 1.0 where the Lisa pixel is black ink
 uniform vec2 uTexSize;       // framebuffer size in Lisa pixels
 uniform vec2 uOut;           // canvas size in device pixels
-uniform float uCurve, uScan, uGlow, uMask, uVig;
+uniform float uCurve, uScan, uGlow, uMask, uVig, uBorder; // uBorder: black margin, as a fraction of the canvas height
 uniform vec3 uPaper, uInk;
 in vec2 vUV; out vec4 o;
 
@@ -49,7 +49,11 @@ vec2 sharp(vec2 uv, vec2 scale) {
 }
 
 void main() {
-  vec2 uv = curve(vUV);
+  // The tube sits inside a black margin: p runs 0..1 across the visible screen only.
+  vec2 b = vec2(uBorder * uOut.y / uOut.x, uBorder);
+  vec2 p = (vUV - b) / (1.0 - 2.0 * b);
+  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  vec2 uv = curve(p);
   vec2 edge = min(uv, 1.0 - uv);
   if (edge.x < 0.0 || edge.y < 0.0) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }
 
@@ -88,7 +92,7 @@ void main() {
     col *= mix(vec3(1.0), m * 1.15, uMask * vis);
   }
 
-  vec2 c = vUV * 2.0 - 1.0;
+  vec2 c = p * 2.0 - 1.0;
   col *= 1.0 - uVig * 0.5 * dot(c, c);
   float corner = smoothstep(0.0, 0.012 + uCurve * 0.1, min(edge.x, edge.y));
   o = vec4(col * corner, 1.0);
@@ -99,7 +103,7 @@ export class Display {
   constructor(canvas) {
     this.canvas = canvas;
     this.aspect = 'lisa';
-    this.fx = { ...PRESETS.soft };
+    this.fx = { ...PRESETS.soft }; // border: the black margin around the screen, as a fraction of the height (0..0.15)
     this.paper = [0.93, 0.945, 0.9];
     this.ink = [0.02, 0.022, 0.02];
     this.frame = null; // last {bits, width, height}
@@ -126,7 +130,7 @@ export class Display {
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
     gl.useProgram(p);
     this.prog = p;
-    this.u = Object.fromEntries(['uTex', 'uTexSize', 'uOut', 'uCurve', 'uScan', 'uGlow', 'uMask', 'uVig', 'uPaper', 'uInk']
+    this.u = Object.fromEntries(['uTex', 'uTexSize', 'uOut', 'uCurve', 'uScan', 'uGlow', 'uMask', 'uVig', 'uBorder', 'uPaper', 'uInk']
       .map((n) => [n, gl.getUniformLocation(p, n)]));
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -143,11 +147,22 @@ export class Display {
 
   setAspect(nameOrRatio) { // a name from ASPECTS, or a number (width/height)
     this.aspect = nameOrRatio;
-    const ratio = typeof nameOrRatio === 'number' ? nameOrRatio : ASPECTS[nameOrRatio].ratio;
-    this.canvas.parentElement?.style.setProperty('--aspect', ratio);
+    this._applyLayout();
     this.resize();
   }
-  setEffects(fx) { Object.assign(this.fx, fx); this.redraw(); }
+  /** The visible screen keeps the chosen aspect ratio; the black border is added around it, so the canvas is a little bigger. */
+  _applyLayout() {
+    const ratio = typeof this.aspect === 'number' ? this.aspect : ASPECTS[this.aspect].ratio;
+    const b = this.border;
+    this.canvas.parentElement?.style.setProperty('--aspect', ratio * (1 - 2 * b) + 2 * b);
+  }
+  get border() { return Math.min(0.15, Math.max(0, this.fx.border || 0)); }
+  setEffects(fx) {
+    const borderChanged = 'border' in fx && fx.border !== this.fx.border;
+    Object.assign(this.fx, fx);
+    if (borderChanged) this._applyLayout();
+    this.redraw();
+  }
   get curve() { return this.gl ? this.fx.curve : 0; }
 
   resize() {
@@ -182,6 +197,7 @@ export class Display {
     gl.uniform1f(this.u.uGlow, this.fx.glow);
     gl.uniform1f(this.u.uMask, this.fx.mask);
     gl.uniform1f(this.u.uVig, this.fx.vignette);
+    gl.uniform1f(this.u.uBorder, this.border);
     gl.uniform3fv(this.u.uPaper, this.paper);
     gl.uniform3fv(this.u.uInk, this.ink);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -201,8 +217,10 @@ export class Display {
         img.data[o] = img.data[o + 1] = img.data[o + 2] = v; img.data[o + 3] = 255;
       }
     this._off.getContext('2d').putImageData(img, 0, 0);
+    const W = this.canvas.width, H = this.canvas.height, by = this.border * H, bx = this.border * H;
+    this.ctx.fillStyle = '#000'; this.ctx.fillRect(0, 0, W, H);
     this.ctx.imageSmoothingEnabled = false;
-    this.ctx.drawImage(this._off, 0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.drawImage(this._off, bx, by, W - 2 * bx, H - 2 * by);
   }
 
   /**
@@ -212,6 +230,8 @@ export class Display {
   toSource(clientX, clientY, srcW = 720, srcH = 364) {
     const r = this.canvas.getBoundingClientRect();
     let u = (clientX - r.left) / r.width, v = (clientY - r.top) / r.height;
+    const bx = this.border * r.height / r.width, by = this.border;       // undo the black margin
+    u = (u - bx) / (1 - 2 * bx); v = (v - by) / (1 - 2 * by);
     const k = this.curve;
     if (k) { // same transform as the shader's curve()
       let cx = u * 2 - 1, cy = v * 2 - 1;

@@ -530,9 +530,18 @@ LISA_API double lisa_cycles(void) { return (double)cpu68k_clocks; }
 #define MOUSE_ARRIVE_TIMEOUT (3 * LISA_CYCLES_PER_SECOND)
 static struct { int want_down, down_sent, want_up, x, y; XTIMER t_req, t_down; } mb;
 
+/* Nothing that reads the mouse is running: the ROM (its tests and menu), or a program with its own code. */
+#define NO_MOUSE_OS (running_lisa_os == UNKNOWN_OS_RUNNING || running_lisa_os == LISA_ROM_RUNNING)
+static int mv_pending, mv_x, mv_y; /* a pointer move held back while no known OS is running */
+
 static void mouse_pump(void)
 {
   int px, py;
+  if (mv_pending && NO_MOUSE_OS == 0)
+  {
+    add_mouse_event((int16)mv_x, (int16)mv_y, 0);
+    mv_pending = 0;
+  }
   if (!mb.want_down)
     return;
   if (!mb.down_sent)
@@ -686,6 +695,15 @@ LISA_API void lisa_mouse(int x, int y, int button)
     mb.want_up = 1; /* released after the press has been delivered and held */
     mb.x = x;
     mb.y = y;
+  }
+  else if (button == 0 && NO_MOUSE_OS)
+  {
+    /* No OS that reads the mouse: stand-alone programs (demos) have no mouse driver, and the COPS mouse
+       interrupts they never asked for upset their timing (the demo speeds up when the pointer moves).
+       Remember the target; mouse_pump() delivers it if an OS turns up. */
+    mv_pending = 1;
+    mv_x = x;
+    mv_y = y;
   }
   else
   {

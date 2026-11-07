@@ -42,7 +42,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('lisaem.' + k, JSON.stringify(v)); } catch { /* private mode etc. */ } },
 };
 $('aspect').innerHTML = Object.entries(ASPECTS).map(([k, a]) => `<option value="${k}">${a.label}</option>`).join('');
-const sliders = { curve: 'fxCurve', scan: 'fxScan', glow: 'fxGlow', mask: 'fxMask', vignette: 'fxVig' };
+const sliders = { curve: 'fxCurve', scan: 'fxScan', glow: 'fxGlow', mask: 'fxMask', vignette: 'fxVig', border: 'fxBorder' };
 function syncFxUI(fx) { for (const [k, id] of Object.entries(sliders)) $(id).value = fx[k]; }
 function applyFx(preset, fx) {
   $('fxPreset').value = preset; display.setEffects(fx); syncFxUI(display.fx);
@@ -149,8 +149,16 @@ async function ensureSound() {
   return sound.loading;
 }
 
+// Sound defaults to on (remembered after that). Browsers keep audio suspended until the page has had a
+// click or key press, so the context is created up front and resumed by the first gesture.
+$('sound').checked = store.get('sound', true);
+for (const ev of ['pointerdown', 'keydown']) {
+  addEventListener(ev, () => { if ($('sound').checked && sound.ctx?.state === 'suspended') sound.ctx.resume(); }, { capture: true });
+}
+
 function pumpSound() {
   if (!lisa) return;
+  if ($('sound').checked && !sound.node) { ensureSound(); return; }
   if (!$('sound').checked || !sound.node) {
     if (sound.forMachine === lisa) { lisa.audioStop(); sound.forMachine = null; }
     return;
@@ -495,6 +503,7 @@ renderSlots();
 $('btnPause').addEventListener('click', () => { paused = !paused; $('btnPause').textContent = paused ? 'Resume' : 'Pause'; });
 $('speed').addEventListener('change', (e) => { speed = +e.target.value; sound.node?.port.postMessage('flush'); });
 $('sound').addEventListener('change', async (e) => {
+  store.set('sound', e.target.checked);
   if (e.target.checked && await ensureSound()) { await sound.ctx.resume(); sound.node.port.postMessage('flush'); sound.forMachine = null; }
   else if (sound.ctx) sound.node?.port.postMessage('flush');
 });

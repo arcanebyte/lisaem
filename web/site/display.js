@@ -27,7 +27,7 @@ precision highp float;
 uniform sampler2D uTex;      // R8: 1.0 where the Lisa pixel is black ink
 uniform vec2 uTexSize;       // framebuffer size in Lisa pixels
 uniform vec2 uOut;           // canvas size in device pixels
-uniform float uCurve, uScan, uGlow, uMask, uVig, uBorder; // uBorder: black margin, as a fraction of the canvas height
+uniform float uCurve, uScan, uGlow, uMask, uVig, uBorder; // uBorder: black margin on each side, as a fraction of the canvas
 uniform vec3 uPaper, uInk;
 in vec2 vUV; out vec4 o;
 
@@ -49,9 +49,9 @@ vec2 sharp(vec2 uv, vec2 scale) {
 }
 
 void main() {
-  // The tube sits inside a black margin: p runs 0..1 across the visible screen only.
-  vec2 b = vec2(uBorder * uOut.y / uOut.x, uBorder);
-  vec2 p = (vUV - b) / (1.0 - 2.0 * b);
+  // The tube is drawn inside the canvas with a black margin all round (the same fraction on both axes, so the
+  // picture keeps its aspect): p runs 0..1 across the visible screen only.
+  vec2 p = (vUV - uBorder) / (1.0 - 2.0 * uBorder);
   if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }
   vec2 uv = curve(p);
   vec2 edge = min(uv, 1.0 - uv);
@@ -103,7 +103,7 @@ export class Display {
   constructor(canvas) {
     this.canvas = canvas;
     this.aspect = 'lisa';
-    this.fx = { ...PRESETS.soft }; // border: the black margin around the screen, as a fraction of the height (0..0.15)
+    this.fx = { ...PRESETS.soft }; // border: the black margin around the screen, as a fraction of the height (0..0.25)
     this.paper = [0.93, 0.945, 0.9];
     this.ink = [0.02, 0.022, 0.02];
     this.frame = null; // last {bits, width, height}
@@ -150,17 +150,13 @@ export class Display {
     this._applyLayout();
     this.resize();
   }
-  /** The visible screen keeps the chosen aspect ratio; the black border is added around it, so the canvas is a little bigger. */
   _applyLayout() {
     const ratio = typeof this.aspect === 'number' ? this.aspect : ASPECTS[this.aspect].ratio;
-    const b = this.border;
-    this.canvas.parentElement?.style.setProperty('--aspect', ratio * (1 - 2 * b) + 2 * b);
+    this.canvas.parentElement?.style.setProperty('--aspect', ratio);
   }
-  get border() { return Math.min(0.15, Math.max(0, this.fx.border || 0)); }
+  get border() { return Math.min(0.25, Math.max(0, this.fx.border || 0)); } // fraction of the canvas on each side
   setEffects(fx) {
-    const borderChanged = 'border' in fx && fx.border !== this.fx.border;
     Object.assign(this.fx, fx);
-    if (borderChanged) this._applyLayout();
     this.redraw();
   }
   get curve() { return this.gl ? this.fx.curve : 0; }
@@ -217,7 +213,7 @@ export class Display {
         img.data[o] = img.data[o + 1] = img.data[o + 2] = v; img.data[o + 3] = 255;
       }
     this._off.getContext('2d').putImageData(img, 0, 0);
-    const W = this.canvas.width, H = this.canvas.height, by = this.border * H, bx = this.border * H;
+    const W = this.canvas.width, H = this.canvas.height, by = this.border * H, bx = this.border * W;
     this.ctx.fillStyle = '#000'; this.ctx.fillRect(0, 0, W, H);
     this.ctx.imageSmoothingEnabled = false;
     this.ctx.drawImage(this._off, bx, by, W - 2 * bx, H - 2 * by);
@@ -230,7 +226,7 @@ export class Display {
   toSource(clientX, clientY, srcW = 720, srcH = 364) {
     const r = this.canvas.getBoundingClientRect();
     let u = (clientX - r.left) / r.width, v = (clientY - r.top) / r.height;
-    const bx = this.border * r.height / r.width, by = this.border;       // undo the black margin
+    const bx = this.border, by = this.border;                           // undo the black margin
     u = (u - bx) / (1 - 2 * bx); v = (v - by) / (1 - 2 * by);
     const k = this.curve;
     if (k) { // same transform as the shader's curve()

@@ -60,7 +60,8 @@ image directly. No ROM is needed or loaded. Software that depends on ROM routine
 not implement stops with an "unhandled ROM code" message (e.g. the `alisando` demo calls the ROM's
 PowerOff routine).
 
-**With a real Lisa boot ROM.** Lisa ROMs are Apple's and are not included; supply your own.
+**With a real Lisa boot ROM.** Lisa ROMs are Apple's and are not included in this repository. The browser UI
+downloads one for you (below), or you can supply your own.
 
 ```js
 const lisa = await Lisa.create();
@@ -79,6 +80,35 @@ display to the XL screen, 608×431 (MacWorks only). CLI: `--rom file` or `--rom 
 
 In the browser UI, choose the ROM in the *Boot ROM* card, or drop it on the screen. It is remembered in this browser's local
 storage only (never uploaded) and can be forgotten with one click.
+
+### Downloading a boot ROM (default: Rev H)
+
+When `serve.mjs` is the server and no ROM is loaded, the page downloads **Rev H (2.H)** by itself on first
+load (switch this off with *Download the default ROM automatically*; *Forget ROM* also turns it off). The
+*Boot ROM* card has a picker and a *Download* button for the other revisions. The files come from
+`https://bitsavers.trailing-edge.com/bits/Apple/Lisa/firmware/` (change it with `--rom-source <url>`).
+
+Why the server does it: bitsavers sends no CORS headers, so a browser page cannot fetch those files itself.
+`serve.mjs` fetches them on the page's behalf, and so is deliberately not an open proxy:
+
+- only the exact file names listed in `site/roms.json` can be requested, from that one source;
+- each file must be 8 KB and match its pinned SHA-256 (a mismatch is refused, never cached, never served);
+- verified files are cached in `web/.rom-cache/` (git-ignored), so the source is contacted at most once per
+  file; a cache entry that no longer matches its hash is ignored;
+- `--no-rom-fetch` makes it serve only what is already cached and never touch the network;
+- redirects are not followed, and dotfiles (including the cache directory) are not served as static files.
+
+A page hosted some other way (a static host) has no `/rom/` endpoint, so the download controls simply do not
+appear; load a ROM yourself, or serve the page with `serve.mjs`.
+
+| Revision | In the UI | Result here |
+|---|---|---|
+| **H** (2.H) | default | boots the Office System from floppy and ProFile, identical to the ROM-less result |
+| F (2.F) | experimental | valid checksum, shows its startup menu; starting a floppy through it does not work yet |
+| 3A | experimental | valid checksum, switches to the 608×431 XL screen; MacWorks only, untested without a MacWorks disk |
+| B, C, D | not offered | C and D fail their checksum and show a black screen; B is an unusual Lisa 1 ROM that does not boot |
+
+The bitsavers copy of Rev H is byte-identical to the ROM pair used while developing this.
 
 **Status of ROM boot: verified with a real 2.H ROM** (341-0175-H / 341-0176-H, checksum valid):
 
@@ -258,7 +288,7 @@ Not yet verified or not done:
 - serial I/O end to end (the plumbing builds and links; no guest has exercised it);
 - the MCP server with a third-party client; snapshots restored after changing media; floppy-write persistence (only the ProFile path was exercised in the browser);
 - operating systems other than the Office System (Monitor, Xenix, UniPlus, MacWorks);
-- other ROM revisions, sound output accuracy, ImageWriter capture, EtherBox networking (stubbed), and the
+- ROM revisions other than H (F and 3A load, but only H is known to boot), sound output accuracy, ImageWriter capture, EtherBox networking (stubbed), and the
   XL screen mode (608×431) with a real 3A ROM;
 - mobile/touch input and an in-page serial terminal.
 

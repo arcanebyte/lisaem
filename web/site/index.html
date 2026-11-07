@@ -103,8 +103,16 @@
             <button id="btnForgetRom" class="icon" title="Forget this ROM" aria-label="Forget ROM" disabled>✕</button>
             <input type="file" id="fileRom" multiple hidden>
           </div>
+          <div id="romDefault" hidden>
+            <div class="row">
+              <select id="romChoice" aria-label="Boot ROM to download"></select>
+              <button id="btnFetchRom">Download</button>
+            </div>
+            <p class="note" id="romNote"></p>
+            <label class="inline"><input type="checkbox" id="autoRom" checked> Download the default ROM automatically when none is loaded</label>
+          </div>
           <div class="row"><button id="btnFolderRom" hidden>Use ROM from folder</button></div>
-          <p class="note">Optional. Without one, disks boot directly. A ROM is a 16 KB file, or a .lo and a .hi pair. ROMs are not included; one you choose stays in this browser only.</p>
+          <p class="note">Optional: with no ROM, disks boot directly. Downloads come from <span id="romHost">bitsavers</span> through this page's own server. Or choose your own: a 16 KB file, or a .lo and a .hi pair. A ROM stays in this browser only.</p>
         </div>
       </details>
 

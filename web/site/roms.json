@@ -1,0 +1,30 @@
+{
+  "source": "https://bitsavers.trailing-edge.com/bits/Apple/Lisa/firmware/",
+  "default": "H",
+  "roms": [
+    {
+      "id": "H",
+      "label": "Rev H (2.H)",
+      "status": "verified",
+      "note": "The latest ROM for the Lisa Office System; also fine for MacWorks and Xenix. Boots the Office System here.",
+      "lo": { "file": "341-0176-H.BIN", "sha256": "77a181c4317a6e741775399654f41b70c8b2636a4e2c8b12dd42e763fea00293" },
+      "hi": { "file": "341-0175-H.BIN", "sha256": "f1b791d09eb230e94539e2db6025ea381721dc325c28f75f1adb2217b41477cc" }
+    },
+    {
+      "id": "F",
+      "label": "Rev F (2.F), experimental",
+      "status": "experimental",
+      "note": "An early Lisa 2 ROM. Loads and shows its startup menu, but starting a floppy through it does not work in this emulator yet.",
+      "lo": { "file": "341-0176-F.BIN", "sha256": "b31e02947b689e5490a0fcd0e1e59f39d93d4833486c613c62dff6c2034dd7c6" },
+      "hi": { "file": "341-0175-F.BIN", "sha256": "10f41f5b1d16d3abef4b09671d257b0a5beaefc2c09bf1e14b876a906a4c58f0" }
+    },
+    {
+      "id": "3A",
+      "label": "Rev 3A, experimental (MacWorks XL screen)",
+      "status": "experimental",
+      "note": "For Lisas with the screen modification kit: a 608x431 screen, MacWorks only (it will not run the Office System). Untested without a MacWorks disk.",
+      "lo": { "file": "341-0346-A.BIN", "sha256": "56063f3cf2a3dea1abc5219ff4cfda3bb73ed099482528935b51fd6a69c85640" },
+      "hi": { "file": "341-0347-A.BIN", "sha256": "31378c5b1c010e32f90e1bf2df1d50f1659bc50f12053c04f61bdacb6f1680f1" }
+    }
+  ]
+}

@@ -377,13 +377,13 @@ const b64 = {
   enc: (u8) => { let s = ''; for (const b of u8) s += String.fromCharCode(b); return btoa(s); },
   dec: (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0)),
 };
-async function takeRom(files) {
+async function takeRom(files, label) {
   files = [...files];
   if (files.length === 2) { // a lo/hi EPROM pair, told apart by file name
     // lo = odd-addressed bytes (341-0176 / 341-0346 / .lo), hi = even-addressed bytes (341-0175 / 341-0347 / .hi)
     const lo = files.find((f) => /\.lo$|0176|0346|-176-/i.test(f.name)), hi = files.find((f) => /\.hi$|0175|0347|-175-/i.test(f.name));
     if (!lo || !hi) { log('Two ROM files given: I could not tell which is the low and which the high half (expected .lo/.hi or 341-0175/0176 in the names).'); return; }
-    rom = { name: `${lo.name} + ${hi.name}`, rom: { lo: new Uint8Array(await lo.arrayBuffer()), hi: new Uint8Array(await hi.arrayBuffer()) } };
+    rom = { name: label ?? `${lo.name} + ${hi.name}`, rom: { lo: new Uint8Array(await lo.arrayBuffer()), hi: new Uint8Array(await hi.arrayBuffer()) } };
     store.set('rom', { name: rom.name, lo: b64.enc(rom.rom.lo), hi: b64.enc(rom.rom.hi) });
   } else if (files.length === 1) {
     rom = { name: files[0].name, rom: new Uint8Array(await files[0].arrayBuffer()) };
@@ -399,7 +399,63 @@ async function takeRom(files) {
 }
 $('btnRom').addEventListener('click', () => $('fileRom').click());
 $('fileRom').addEventListener('change', (e) => { takeRom(e.target.files); e.target.value = ''; });
-$('btnForgetRom').addEventListener('click', () => { rom = null; store.set('rom', null); renderSlots(); log('Boot ROM forgotten.'); });
+$('btnForgetRom').addEventListener('click', () => {
+  rom = null; store.set('rom', null);
+  $('autoRom').checked = false; store.set('autoRom', false);   // forgetting means "don't bring it back by itself"
+  renderSlots(); log('Boot ROM forgotten. Automatic download is off.');
+});
+
+// ---- downloading a boot ROM ---------------------------------------------------------------
+//
+// The files come from the server this page was loaded from (serve.mjs), which fetches them from the
+// catalog's source, checks each against a pinned SHA-256 and caches it. A page served some other way has no
+// /rom/ endpoint, and then none of this is shown.
+
+let romCatalog = null;
+$('autoRom').checked = store.get('autoRom', true);
+$('autoRom').addEventListener('change', () => store.set('autoRom', $('autoRom').checked));
+
+function showRomNote() {
+  const r = romCatalog?.roms.find((x) => x.id === $('romChoice').value);
+  $('romNote').textContent = r ? r.note : '';
+}
+
+async function fetchRom(id) {
+  const r = romCatalog.roms.find((x) => x.id === id);
+  if (!r) return false;
+  log(`Downloading boot ROM ${r.label} from ${new URL(romCatalog.source).host}…`);
+  try {
+    const get = async (f) => {
+      const res = await fetch('/rom/' + encodeURIComponent(f.file));
+      if (!res.ok) throw new Error(await res.text());
+      return new File([await res.arrayBuffer()], f.file);
+    };
+    const [lo, hi] = await Promise.all([get(r.lo), get(r.hi)]);
+    await takeRom([lo, hi], `${r.label} (bitsavers)`);
+    return true;
+  } catch (e) {
+    log(`Could not download the boot ROM: ${e.message}. Disks will boot without one.`);
+    return false;
+  }
+}
+
+$('btnFetchRom').addEventListener('click', () => busy($('btnFetchRom'), 'Downloading…', () => fetchRom($('romChoice').value)));
+$('romChoice').addEventListener('change', showRomNote);
+
+const romReady = (async () => {
+  try {
+    const r = await fetch('/rom/index.json');
+    if (!r.ok) return;
+    romCatalog = await r.json();
+    $('romChoice').innerHTML = romCatalog.roms.map((x) => `<option value="${x.id}">${x.label}</option>`).join('');
+    $('romChoice').value = romCatalog.default;
+    $('romHost').textContent = new URL(romCatalog.source).host;
+    $('romDefault').hidden = false;
+    $('btnFetchRom').disabled = !romCatalog.fetchAllowed;
+    showRomNote();
+    if (!rom && $('autoRom').checked && romCatalog.fetchAllowed) await fetchRom(romCatalog.default);
+  } catch { /* no ROM endpoint: a statically hosted page */ }
+})();
 
 // ---- collapsible cards, remembered per browser ------------------------------------------------
 
@@ -462,6 +518,7 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 window.lisaAuto = {
   get lisa() { return lisa; },
+  ready: romReady,                      // resolves when the startup boot-ROM download (if any) has finished
   display,                              // .setAspect('lisa'|'square'|'fourThree'), .setEffects({curve, scan, glow, mask, vignette})
   /** Load a disk image from a URL or bytes, and boot it. */
   async boot(src, name = 'disk.dc42') {

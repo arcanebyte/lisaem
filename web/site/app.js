@@ -1,6 +1,7 @@
 // LisaEm Web: browser front end for the LisaEm core (WebAssembly).
 import { Lisa, KEYMAP, SCREEN_W, SCREEN_H } from '../js/lisa.js';
 import { Display, ASPECTS, PRESETS } from './display.js';
+import { idbGet, idbPut, idbDel } from './store.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -27,7 +28,7 @@ function log(msg) {
 }
 
 function setEnabled(on) {
-  for (const id of ['btnPause', 'btnReset', 'btnShot', 'btnType']) $(id).disabled = !on;
+  for (const id of ['btnPause', 'btnReset', 'btnShot', 'btnType', 'btnSaveState']) $(id).disabled = !on;
 }
 
 function drawScreen() { display.present(lisa.screen()); }
@@ -73,9 +74,16 @@ function updateStatus() {
 
 async function newMachine() {
   if (!floppy && !profile && !rom) return false;
+  // Do all the awaiting before the machine exists: once `lisa` is set the render loop runs it, and an
+  // un-booted machine would execute garbage from address 0.
+  const profileBytes = profile ? await diskBytes('profile', profile) : null;
+  const floppyBytes = floppy ? await diskBytes('floppy', floppy) : null;
   lisa = await Lisa.create({ ramKB: 1024, clock: 'now' });
-  if (profile && !lisa.mountProfile(profile.bytes)) log('Could not mount the ProFile image.');
-  if (floppy && !lisa.insertFloppy(floppy.bytes)) { log('That does not look like a valid floppy image.'); lisa = null; return false; }
+  if (profile && !lisa.mountProfile(profileBytes)) log('Could not mount the ProFile image.');
+  if (floppy && !lisa.insertFloppy(floppyBytes)) { log('That does not look like a valid floppy image.'); lisa = null; return false; }
+  baseline.profile = profile ? lisa.diskHash(0) : 0;
+  baseline.floppy = floppy ? lisa.diskHash(1) : 0;
+  refreshDiskButtons();
   let ok;
   if (rom) {
     try {
@@ -209,6 +217,99 @@ for (const [el, cls] of [[$('screenWrap'), 'drag'], [$('dropFloppy'), 'drag']]) 
   } catch { /* no media server */ }
 })();
 
+// ---- keeping disk changes ---------------------------------------------------------------
+//
+// The guest writes to its disks (the Office System updates its ProFile as it runs). Those changes are
+// saved to IndexedDB, keyed by disk name and size, and used instead of the original bytes the next time
+// the same disk is loaded.
+
+const baseline = { profile: 0, floppy: 0 };   // fingerprint of each disk when last loaded/saved
+const diskKey = (kind, m) => `${kind}:${m.name}:${m.bytes.length}`;
+
+async function diskBytes(kind, m) {
+  if ($('keepChanges').checked) {
+    const saved = await idbGet(diskKey(kind, m));
+    if (saved?.bytes && saved.bytes.byteLength === m.bytes.length) {
+      log(`Using your saved changes to ${m.name} (${new Date(saved.savedAt).toLocaleString()})`);
+      return new Uint8Array(saved.bytes);
+    }
+  }
+  return m.bytes;
+}
+
+function refreshDiskButtons() {
+  $('btnDlProfile').disabled = !(lisa && profile);
+  $('btnDlFloppy').disabled = !(lisa && floppy);
+  $('btnRevert').disabled = !(profile || floppy);
+}
+
+let saving = false;
+async function saveDisks() {
+  if (!lisa || saving || !$('keepChanges').checked) return;
+  saving = true;
+  try {
+    for (const [kind, which, m] of [['profile', 0, profile], ['floppy', 1, floppy]]) {
+      if (!m) continue;
+      const h = lisa.diskHash(which);
+      if (!h || h === baseline[kind]) continue;
+      const bytes = kind === 'profile' ? lisa.exportProfile() : lisa.exportFloppy();
+      if (bytes && await idbPut(diskKey(kind, m), { name: m.name, bytes: bytes.buffer, savedAt: Date.now() })) {
+        baseline[kind] = h;
+        $('saveState').textContent = `saved ${new Date().toLocaleTimeString()}`;
+      }
+    }
+  } finally { saving = false; }
+}
+setInterval(saveDisks, 15000);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveDisks(); });
+window.addEventListener('pagehide', saveDisks);
+$('keepChanges').addEventListener('change', () => store.set('keep', $('keepChanges').checked));
+$('keepChanges').checked = store.get('keep', true);
+
+function download(bytes, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$('btnDlProfile').addEventListener('click', () => { const b = lisa?.exportProfile(); if (b) download(b, profile.name); });
+$('btnDlFloppy').addEventListener('click', () => { const b = lisa?.exportFloppy(); if (b) download(b, floppy.name); });
+
+let revertArmed = 0;
+$('btnRevert').addEventListener('click', async () => {
+  if (!revertArmed) { // two clicks, so it cannot happen by accident
+    revertArmed = setTimeout(() => { revertArmed = 0; $('btnRevert').textContent = 'Revert disks'; }, 4000);
+    $('btnRevert').textContent = 'Click again to confirm'; return;
+  }
+  clearTimeout(revertArmed); revertArmed = 0; $('btnRevert').textContent = 'Revert disks';
+  for (const [kind, m] of [['profile', profile], ['floppy', floppy]]) if (m) await idbDel(diskKey(kind, m));
+  $('saveState').textContent = 'reverted'; log('Saved disk changes discarded; booting the original disks.');
+  const was = $('keepChanges').checked; $('keepChanges').checked = false;
+  await newMachine(); $('keepChanges').checked = was; canvas.focus();
+});
+
+// ---- saving the whole machine ------------------------------------------------------------
+
+$('btnSaveState').addEventListener('click', async () => {
+  if (!lisa) return;
+  $('btnSaveState').disabled = true;
+  try {
+    const bytes = await lisa.serialize();
+    const ok = await idbPut('state', { bytes: bytes.buffer, savedAt: Date.now(), at: lisa.time });
+    log(ok ? `Saved machine state (${(bytes.length / 1048576).toFixed(1)} MB, ${(lisa.time / 1000).toFixed(0)} s into the run).` : 'Could not save state (storage unavailable).');
+  } finally { $('btnSaveState').disabled = false; }
+});
+$('btnLoadState').addEventListener('click', async () => {
+  const saved = await idbGet('state');
+  if (!saved) { log('No saved state in this browser.'); return; }
+  lisa = await Lisa.deserialize(new Uint8Array(saved.bytes));
+  stopped = false; paused = false; $('btnPause').textContent = 'Pause';
+  const s = lisa.screen(); screenW = s.width; screenH = s.height;
+  display.setAspect(screenW === SCREEN_W ? $('aspect').value : screenW / screenH);
+  $('hint').classList.add('gone'); setEnabled(true); drawScreen();
+  log(`Resumed saved state from ${new Date(saved.savedAt).toLocaleString()}.`);
+});
+
 // ---- boot ROM ---------------------------------------------------------------------------
 
 const b64 = {
@@ -304,19 +405,23 @@ window.lisaAuto = {
   /** Load a disk image from a URL or bytes, and boot it. */
   async boot(src, name = 'disk.dc42') {
     const bytes = typeof src === 'string' ? new Uint8Array(await (await fetch(src)).arrayBuffer()) : src;
-    floppy = { name: typeof src === 'string' ? src.split('/').pop() : name, bytes };
+    floppy = { name: typeof src === 'string' ? decodeURIComponent(src.split('/').pop()) : name, bytes };
     $('floppyName').textContent = floppy.name; showRom();
     return newMachine();
   },
   /** Mount a ProFile image (URL or bytes) and boot from it (through the ROM if one is set). */
   async bootProfile(src, name = 'profile.image') {
     const bytes = typeof src === 'string' ? new Uint8Array(await (await fetch(src)).arrayBuffer()) : src;
-    profile = { name: typeof src === 'string' ? src.split('/').pop() : name, bytes }; floppy = null;
+    profile = { name: typeof src === 'string' ? decodeURIComponent(src.split('/').pop()) : name, bytes }; floppy = null;
     $('romBoot').value = 'profile'; showRom();
     return newMachine();
   },
   /** Choose a boot ROM (16 KB Uint8Array, or {lo, hi}); the next boot() powers on through it. */
   setROM(r, name = 'rom') { rom = { name, rom: r }; showRom(); },
+  /** Persist guest disk changes now; returns the ProFile as the guest left it. */
+  async saveDisks() { await saveDisks(); return lisa?.exportProfile() ?? null; },
+  snapshot: () => lisa.snapshot(),
+  restore: (s) => lisa.restore(s),
   pause() { paused = true; $('btnPause').textContent = 'Resume'; },
   resume() { paused = false; $('btnPause').textContent = 'Pause'; },
   /** Advance emulated time by exactly `ms` and redraw. */

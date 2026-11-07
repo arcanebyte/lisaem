@@ -44,6 +44,9 @@ extern void apple_3(void);
 extern int checkromchksum(void);
 extern void fixromchk(void);
 extern int has_xl_screenmod(void);
+extern DC42ImageType current_upper_floppy_image, current_lower_floppy_image;
+extern uint8 is_floppy_image_currently_inserted(DC42ImageType *F);
+extern int dc42_sync_to_disk(DC42ImageType *F);
 extern void get_next_timer_event(void);
 extern void init_Profiles(void);
 extern void profile_unmount(void);
@@ -724,3 +727,68 @@ LISA_API uint32_t lisa_pointer(void)
    and keys still waiting in the host-side typing queue. */
 LISA_API int lisa_cops_pending(void) { return copsqueuelen; }
 LISA_API int lisa_typing_pending(void) { return (int)(keyq_head - keyq_tail); }
+
+/* ------------------------------------------------------------------------------------ *
+ *  Disk images                                                                          *
+ * ------------------------------------------------------------------------------------ */
+
+/* Write any disk changes held in memory back to the image files in the virtual filesystem, so
+   that reading those files gives the disks as the guest has left them. Returns the number of
+   images flushed. */
+LISA_API int lisa_flush_disks(void)
+{
+  int n = 0, v;
+  if (!initialised)
+    return 0;
+  if (is_floppy_image_currently_inserted(&current_upper_floppy_image))
+    n += dc42_sync_to_disk(&current_upper_floppy_image) == 0;
+  if (is_floppy_image_currently_inserted(&current_lower_floppy_image))
+    n += dc42_sync_to_disk(&current_lower_floppy_image) == 0;
+  for (v = 2; v < 9; v++)
+    if (via[v].ProFile)
+      n += dc42_sync_to_disk(&via[v].ProFile->DC42) == 0;
+  return n;
+}
+
+/* Diagnostic: how the image I/O layer is handling a disk. which: 0 = ProFile on the built-in
+   parallel port, 1 = upper floppy. Returns 0 per-sector file I/O, 1 memory-mapped, 2 whole image in
+   RAM written back on flush/close, or -1 if there is no such disk. */
+LISA_API int lisa_disk_mode(int which)
+{
+  if (which == 0)
+    return (initialised && via[2].ProFile) ? via[2].ProFile->DC42.mmappedio : -1;
+  if (which == 1)
+    return (initialised && is_floppy_image_currently_inserted(&current_upper_floppy_image)) ? current_upper_floppy_image.mmappedio : -1;
+  return -1;
+}
+
+/* Diagnostic/export: pointer to, and size of, the in-memory copy of a disk image (which as in
+   lisa_disk_mode). In memory-mapped and in-RAM modes this is the live image, including guest writes. */
+LISA_API const uint8_t *lisa_disk_ptr(int which, uint32_t *size)
+{
+  DC42ImageType *F = NULL;
+  if (!initialised)
+    return NULL;
+  if (which == 0 && via[2].ProFile)
+    F = &via[2].ProFile->DC42;
+  else if (which == 1 && is_floppy_image_currently_inserted(&current_upper_floppy_image))
+    F = &current_upper_floppy_image;
+  if (!F)
+    return NULL;
+  if (size)
+    *size = (uint32_t)F->size;
+  return F->RAM;
+}
+
+/* A fast fingerprint (FNV-1a, 32-bit) of the live in-memory disk image, so a front end can cheaply
+   tell whether the guest has changed a disk since it last saved it. Returns 0 if there is no such disk. */
+LISA_API uint32_t lisa_disk_hash(int which)
+{
+  uint32_t size = 0, i, h = 2166136261u;
+  const uint8_t *p = lisa_disk_ptr(which, &size);
+  if (!p)
+    return 0;
+  for (i = 0; i < size; i++)
+    h = (h ^ p[i]) * 16777619u;
+  return h ? h : 1;
+}

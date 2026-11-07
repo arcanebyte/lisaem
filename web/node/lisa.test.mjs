@@ -202,3 +202,51 @@ test('ProFile: clicking through the Office System prompt reaches the desktop', {
   lisa.run(30000);
   assert.ok(lisa.screen().diff(prompt) > 0.1, 'screen changed to the desktop');
 });
+
+// ---- Snapshots and disk export ---------------------------------------------------------------
+
+test('snapshot: restore rewinds the machine exactly, repeatably', { skip }, async () => {
+  const lisa = await boot(15);
+  const snap = lisa.snapshot();
+  const scenario = () => { lisa.click(600, 216); lisa.run(3000); return [lisa.screen().hash(), lisa.time]; };
+  const first = scenario();
+  lisa.restore(snap);
+  const second = scenario();
+  lisa.restore(snap);
+  const third = scenario();
+  assert.deepEqual(second, first);
+  assert.deepEqual(third, first);
+});
+
+test('snapshot: serialize/deserialize into a fresh machine continues identically', { skip }, async () => {
+  const a = await boot(15);
+  const bytes = await a.serialize();
+  const b = await Lisa.deserialize(bytes);
+  assert.equal(b.screen().hash(), a.screen().hash(), 'same screen at the snapshot');
+  assert.equal(b.time, a.time, 'same clock');
+  for (const l of [a, b]) { l.click(600, 216); l.run(3000); }
+  assert.equal(b.screen().hash(), a.screen().hash(), 'same screen after continuing');
+  assert.equal(b.registers().pc, a.registers().pc);
+});
+
+test('snapshot: garbage is rejected', async () => {
+  await assert.rejects(Lisa.deserialize(new Uint8Array(100)));
+});
+
+test('disks: the emulator works on copies and export returns what the guest wrote', { skip: skipProfile || (romEnv ? false : 'needs LISA_TEST_ROM too') }, async () => {
+  const original = readFileSync(profilePath);
+  const before = new Uint8Array(original); // our own copy, to prove `original` is never touched
+  const lisa = await Lisa.create();
+  lisa.mountProfile(original);
+  const h0 = lisa.diskHash(0);
+  lisa.loadROM(loadRomEnv());
+  lisa.powerOn({ boot: 'profile' });
+  lisa.run(60000); lisa.click(590, 70); lisa.run(25000);
+  assert.notEqual(lisa.diskHash(0), h0, 'the guest has written to its disk');
+  const out = lisa.exportProfile();
+  assert.equal(out.length, original.length);
+  let changed = 0;
+  for (let i = 0; i < out.length; i++) if (out[i] !== before[i]) changed++;
+  assert.ok(changed > 0, 'exported image contains the guest writes');
+  assert.deepEqual(new Uint8Array(original), before, 'the caller\'s bytes were not modified');
+});

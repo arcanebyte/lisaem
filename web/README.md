@@ -5,7 +5,9 @@ hardware) compiled to WebAssembly, with:
 
 - a **browser UI** (`site/`) — a WebGL display with aspect correction and optional CRT effects, real keyboard and mouse, drag-and-drop disks, sound;
 - a **scriptable JavaScript API** (`js/lisa.js`) that works identically in Node and the browser;
-- a **headless CLI** (`node/lisa-run.mjs`) for boot-and-screenshot runs.
+- a **headless CLI** (`node/lisa-run.mjs`) for boot-and-screenshot runs;
+- an **MCP server** (`mcp/server.mjs`) so an AI agent can run and drive a Lisa;
+- **snapshots** of the whole machine, and disk changes that survive a reload.
 
 It replaces the wxWidgets front end (`src/host/wxui`) rather than patching it: the wx app is left
 untouched and still builds. This directory adds a thin host layer, `src/lisa_web.c`, that does what
@@ -91,6 +93,63 @@ storage only (never uploaded) and can be forgotten with one click.
 
 Not tried: ROM revisions other than 2.H, and the 3A/XL ROM (tested only with a stand-in).
 
+## Snapshots
+
+```js
+const snap = lisa.snapshot();                  // whole machine incl. disks: ~50 MB, ~50 ms
+lisa.run(5000); lisa.click(600, 216);          // ... try something ...
+lisa.restore(snap);                            // ... and rewind, ~10 ms. Bit-identical every time.
+
+const bytes = await lisa.serialize();          // gzip, ~12 MB: put it in a file or IndexedDB
+const copy = await Lisa.deserialize(bytes);    // a fresh machine that carries on exactly where it was
+```
+
+A snapshot is the WASM heap (CPU, RAM, video, every chip, and the memory-mapped disk images) plus, for
+`serialize()`, the media files. `deserialize()` replays the original media and ROM setup first, so the
+virtual filesystem's handles and mappings match the pointers in the saved memory, then restores the heap.
+Restoring after you have mounted or inserted *different* media than when the snapshot was taken is not
+supported. This is the fast way to test: boot once, snapshot at the desktop, restore before each case.
+
+## Disks the guest writes to
+
+The guest writes to its disks (the Office System updates its ProFile as it runs). The emulator works on
+**copies** of the bytes you give it, so your originals are never modified; get the result back with:
+
+```js
+lisa.exportProfile();     // the ProFile as the guest left it (Uint8Array), or null
+lisa.exportFloppy();
+lisa.diskHash(0);         // cheap fingerprint of the live ProFile (1 = floppy): did the guest write?
+lisa.flushDisks();
+```
+
+In the browser UI, changes are saved to IndexedDB (every 15 s, when the tab is hidden, and on close) and
+used instead of the original the next time you load the same disk (matched by name and size). The
+*Disk changes* card has *Download ProFile/floppy*, a *Keep changes* switch, and *Revert disks* (two clicks).
+*Save state* / *Load state* store the whole machine (one slot).
+
+## MCP server (for AI agents)
+
+```sh
+claude mcp add lisa -- node /path/to/web/mcp/server.mjs --media ~/lisa-disks --out ~/lisa-out
+```
+
+or in any MCP client's config: `{"command": "node", "args": [".../web/mcp/server.mjs", "--media", "<dir>", "--out", "<dir>"]}`.
+
+- `--media <dir>` (repeatable): the only places disk images, ROMs and saved snapshots are read from.
+- `--out <dir>`: the only place anything is written (exported disks, saved snapshots); without it nothing can be written.
+
+Tools: `lisa_list_media`, `lisa_start` (floppy / profile / rom / boot device / serial ports), `lisa_status`,
+`lisa_run`, `lisa_screenshot` (aspect-corrected, scalable, croppable, optional ASCII), `lisa_type`, `lisa_key`
+(chords such as `["COMMAND","S"]`), `lisa_click`, `lisa_mouse`, `lisa_drag`, `lisa_wait_for_change`,
+`lisa_wait_for_stable`, `lisa_registers`, `lisa_read_memory`, `lisa_serial_write/read`, `lisa_snapshot`,
+`lisa_restore`, `lisa_snapshot_delete`, `lisa_snapshot_save_file`, `lisa_snapshot_load_file`,
+`lisa_export_disk`. Action tools can attach a screenshot (`screenshot: true`). Time only advances when a
+tool asks, by an exact amount, so a sequence of calls always gives the same result.
+
+The protocol layer is hand-written (no dependencies) and is tested with the client in `mcp/client.mjs`
+over real JSON-RPC. It has not yet been tried with a third-party MCP client such as Claude Code or the MCP
+Inspector.
+
 ## The display
 
 `site/display.js` draws the 1-bit framebuffer with WebGL2 (a plain 2D canvas if WebGL2 is missing):
@@ -171,15 +230,23 @@ Verified here, with Lisa Office System 3.0 install disk 1:
 - boots in Node and in the browser, correct display, OS detected;
 - mouse: pointer reaches the target and clicking *Install* drives the guest to its next screen;
 - keyboard: typed keys enter the COPS queue and are consumed by the guest, and a typed Q makes a guest program quit to the ROM;
-- PNG/ASCII capture; bit-identical results across runs with the fixed clock.
+- PNG/ASCII capture; bit-identical results across runs with the fixed clock;
+- snapshots: restore rewinds exactly (3 of 3 identical), and a machine serialized mid-run (ROM + ProFile, with the
+  guest writing to its disk) and deserialized into a fresh instance matches the original on screen, disk fingerprint,
+  PC and clock, before and after continuing;
+- disks: the guest's writes land in the disk image, export returns them, and the caller's bytes are never modified;
+  in the browser they survive a page reload and *Revert* discards them;
+- MCP: a full session over JSON-RPC (boot, screenshot, click, snapshot, restore, save to file and resume) and the
+  path jail (no reading outside `--media`, no writing outside `--out`).
 
 Not yet verified or not done:
 
 - typed text echoing in a text field, and held-key behaviour in a game;
 - serial I/O end to end (the plumbing builds and links; no guest has exercised it);
+- the MCP server with a third-party client; snapshots restored after changing media; floppy-write persistence (only the ProFile path was exercised in the browser);
 - operating systems other than the Office System (Monitor, Xenix, UniPlus, MacWorks);
-- other ROM revisions, hard-disk boot through the ROM, sound output accuracy, ImageWriter capture, EtherBox networking
-  (stubbed), the XL screen mode (608×431), and save/restore of machine state;
+- other ROM revisions, sound output accuracy, ImageWriter capture, EtherBox networking (stubbed), and the
+  XL screen mode (608×431) with a real 3A ROM;
 - mobile/touch input and an in-page serial terminal.
 
 ## Changes to the original sources
@@ -203,6 +270,7 @@ web/
   exports.json        functions exported from the WASM module
   js/lisa.js          Lisa class, Screen, key tables, PNG encoder
   node/               lisa-run.mjs CLI, lisa.test.mjs
-  site/               browser UI (index.html, app.js, display.js WebGL renderer, style.css)
+  mcp/                server.mjs (MCP server), client.mjs (test client), mcp.test.mjs
+  site/               browser UI (index.html, app.js, display.js WebGL renderer, store.js IndexedDB, style.css)
   serve.mjs           loopback dev server
 ```

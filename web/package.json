@@ -7,7 +7,10 @@
   "scripts": {
     "build": "make",
     "serve": "node serve.mjs",
-    "test": "node --test node/lisa.test.mjs"
+    "test": "node --test node/lisa.test.mjs mcp/mcp.test.mjs",
+    "mcp": "node mcp/server.mjs"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

@@ -67,11 +67,24 @@
       </section>
 
       <section class="card">
+        <h2>Disk changes <span class="renderer" id="saveState">—</span></h2>
+        <label class="inline"><input type="checkbox" id="keepChanges" checked> Keep changes in this browser</label>
+        <div class="row">
+          <button id="btnDlProfile" disabled>Download ProFile</button>
+          <button id="btnDlFloppy" disabled>Download floppy</button>
+          <button id="btnRevert" disabled>Revert disks</button>
+        </div>
+        <p class="note">What the Lisa writes to a disk is saved here and used the next time you load the same disk. Revert discards it.</p>
+      </section>
+
+      <section class="card">
         <h2>Machine</h2>
         <div class="row">
           <button id="btnPause" disabled>Pause</button>
           <button id="btnReset" disabled>Reset</button>
           <button id="btnShot" disabled>Screenshot</button>
+          <button id="btnSaveState" disabled title="Save the whole machine, to resume later">Save state</button>
+          <button id="btnLoadState" title="Resume the saved machine">Load state</button>
         </div>
         <div class="row">
           <label class="inline">Speed

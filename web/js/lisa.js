@@ -130,6 +130,33 @@ export class Screen {
       }
     return out;
   }
+  /**
+   * A copy scaled to w x h by nearest neighbour (w is rounded up to a multiple of 8). Use it to correct
+   * the Lisa's tall pixels (720x500) or to enlarge the screen so small text is easier to read.
+   */
+  resized(w, h) {
+    w = (w + 7) & ~7;
+    const stride = w >> 3, out = new Uint8Array(stride * h);
+    for (let y = 0; y < h; y++) {
+      const sy = Math.min(this.height - 1, Math.floor((y * this.height) / h));
+      for (let x = 0; x < w; x++) {
+        const sx = Math.min(this.width - 1, Math.floor((x * this.width) / w));
+        if (this.pixel(sx, sy)) out[y * stride + (x >> 3)] |= 0x80 >> (x & 7);
+      }
+    }
+    return new Screen(w, h, out);
+  }
+
+  /** A copy of the rectangle (x, y, w, h), clipped to the screen; the width is padded to a multiple of 8. */
+  crop(x, y, w, h) {
+    x = Math.max(0, x | 0); y = Math.max(0, y | 0);
+    w = Math.max(1, Math.min(w | 0, this.width - x)); h = Math.max(1, Math.min(h | 0, this.height - y));
+    const ow = (w + 7) & ~7, stride = ow >> 3, out = new Uint8Array(stride * h);
+    for (let j = 0; j < h; j++)
+      for (let i = 0; i < w; i++) if (this.pixel(x + i, y + j)) out[j * stride + (i >> 3)] |= 0x80 >> (i & 7);
+    return new Screen(ow, h, out);
+  }
+
   /** Encode as a 1-bit grayscale PNG (no dependencies). */
   toPNG() { return encodePNG1bit(this.width, this.height, this.bits); }
 }
@@ -149,6 +176,7 @@ export class Lisa {
       printErr: (t) => log && console.error(t),
     });
     const lisa = new Lisa(core);
+    lisa._opts = { ramKB, epoch };
     const rc = core.ccall('lisa_init', 'number', ['number', 'number', 'number'], [ramKB, log ? 1 : 0, epoch]);
     if (rc) throw new Error(`lisa_init failed: ${rc}`);
     return lisa;
@@ -158,6 +186,8 @@ export class Lisa {
     this.core = core;
     this._c = (name, ret, types, args) => core.ccall('lisa_' + name, ret, types, args);
     this._n = 0;
+    this._opts = null;   // creation options, for rebuilding the machine from a snapshot
+    this._setup = [];    // ordered media/ROM setup calls, replayed when restoring into a fresh machine
   }
 
   // ---- media -------------------------------------------------------------------------
@@ -165,15 +195,19 @@ export class Lisa {
   /** Insert a DiskCopy 4.2 (or raw) floppy image. Returns true on success. */
   insertFloppy(bytes, name = 'floppy.dc42') {
     const path = '/' + name;
-    this.core.FS.writeFile(path, bytes);
-    return this._c('insert_floppy', 'number', ['string'], [path]) === 0;
+    this.core.FS.writeFile(path, new Uint8Array(bytes)); // a copy: the emulator writes to its image
+    const ok = this._c('insert_floppy', 'number', ['string'], [path]) === 0;
+    if (ok) this._setup.push({ op: 'floppy', path });
+    return ok;
   }
 
   /** Attach a ProFile hard disk image to the built-in parallel port. */
   mountProfile(bytes, name = 'profile.dc42') {
     const path = '/' + name;
-    this.core.FS.writeFile(path, bytes);
-    return this._c('mount_profile', 'number', ['string'], [path]) === 0;
+    this.core.FS.writeFile(path, new Uint8Array(bytes)); // a copy: the guest writes to its disk
+    const ok = this._c('mount_profile', 'number', ['string'], [path]) === 0;
+    if (ok) { this._setup.push({ op: 'profile', path }); this._profilePath = path; }
+    return ok;
   }
 
   /** Boot from the inserted floppy using the built-in ROM-less (HLE) loader. */
@@ -191,15 +225,17 @@ export class Lisa {
    */
   loadROM(rom) {
     let path = '/lisa.rom';
+    const paths = [];
     if (rom && rom.lo && rom.hi) {
-      this.core.FS.writeFile('/lisa.rom.lo', rom.lo);
-      this.core.FS.writeFile('/lisa.rom.hi', rom.hi);
-      path = '/lisa.rom.lo';
+      this.core.FS.writeFile('/lisa.rom.lo', new Uint8Array(rom.lo));
+      this.core.FS.writeFile('/lisa.rom.hi', new Uint8Array(rom.hi));
+      path = '/lisa.rom.lo'; paths.push('/lisa.rom.lo', '/lisa.rom.hi');
     } else {
-      this.core.FS.writeFile(path, rom);
+      this.core.FS.writeFile(path, new Uint8Array(rom)); paths.push(path);
     }
     const fmt = this._c('load_rom', 'number', ['string'], [path]);
     if (fmt < 0) throw new Error('not a recognised Lisa boot ROM (expected 16 KB image, lo/hi pair, or DTC listing)');
+    this._setup.push({ op: 'rom', path, paths });
     const v = this._c('rom_version', 'number', [], []);
     return {
       format: ['', 'dtc-listing', 'split', 'binary'][fmt],
@@ -380,6 +416,106 @@ export class Lisa {
     return out;
   }
 
+  // ---- disks: flushing, export, change detection -------------------------------------------
+
+  /** Push disk changes held in memory back to the image files. Returns how many images were flushed. */
+  flushDisks() { return this._c('flush_disks', 'number', [], []); }
+
+  /** A 32-bit fingerprint of the live disk image (0 = ProFile, 1 = floppy); changes when the guest writes to it. */
+  diskHash(which = 0) { return this._c('disk_hash', 'number', ['number'], [which]) >>> 0; }
+
+  /** The ProFile exactly as the guest has left it (a copy), or null if none is mounted. */
+  exportProfile() {
+    if (!this._profilePath) return null;
+    this.flushDisks();
+    return this.core.FS.readFile(this._profilePath).slice();
+  }
+
+  /** The floppy as the guest has left it (a copy), or null if none is inserted. */
+  exportFloppy() {
+    const f = [...this._setup].reverse().find((o) => o.op === 'floppy');
+    if (!f) return null;
+    this.flushDisks();
+    return this.core.FS.readFile(f.path).slice();
+  }
+
+  // ---- snapshots ---------------------------------------------------------------------------
+
+  /**
+   * Capture the whole machine (CPU, RAM, video, every chip, and the disks, which live in the same
+   * memory). Takes a few tens of milliseconds. restore() rewinds this machine to it exactly; runs
+   * from a restored snapshot are bit-identical to the original run. Pass { media: true } to also
+   * include the image files, which serialize() needs.
+   */
+  snapshot({ media = false } = {}) {
+    this.flushDisks();
+    const snap = {
+      version: 1,
+      heap: this.core.HEAPU8.slice(),
+      opts: { ...this._opts },
+      setup: this._setup.map((o) => ({ ...o })),
+      profilePath: this._profilePath ?? null,
+    };
+    if (media) {
+      snap.media = {};
+      for (const o of this._setup) for (const path of o.paths ?? [o.path]) snap.media[path] = this.core.FS.readFile(path).slice();
+    }
+    return snap;
+  }
+
+  /**
+   * Rewind to a snapshot taken from this machine (or one set up identically, see deserialize()).
+   * The disks go back too. Media inserted or mounted after the snapshot was taken is not supported.
+   */
+  restore(snap) {
+    if (snap.version !== 1) throw new Error('unknown snapshot version');
+    let mem = this.core.HEAPU8;
+    if (mem.length < snap.heap.length) { // a fresh machine: grow its memory to the snapshot's size
+      const p = this.core._malloc(snap.heap.length - mem.length + (1 << 20));
+      if (!p) throw new Error('out of memory restoring snapshot');
+      this.core._free(p);
+      mem = this.core.HEAPU8;
+    }
+    mem.set(snap.heap, 0);
+    mem.fill(0, snap.heap.length); // memory the snapshot did not have must read as fresh (zero)
+    this._setup = snap.setup.map((o) => ({ ...o }));
+    this._profilePath = snap.profilePath;
+    return this;
+  }
+
+  /** A snapshot as a compact byte array (gzip), suitable for a file or IndexedDB. Includes the media. */
+  async serialize(snap = this.snapshot({ media: true })) {
+    if (!snap.media) throw new Error('serialize needs a snapshot taken with { media: true }');
+    const paths = Object.keys(snap.media);
+    const header = new TextEncoder().encode(JSON.stringify({
+      v: 1, opts: snap.opts, setup: snap.setup, profilePath: snap.profilePath,
+      media: paths.map((path) => ({ path, length: snap.media[path].length })), heapLength: snap.heap.length,
+    }));
+    const lenBytes = new Uint8Array(4); new DataView(lenBytes.buffer).setUint32(0, header.length);
+    return gzip(concat([new TextEncoder().encode('LSNP'), lenBytes, header, ...paths.map((p) => snap.media[p]), snap.heap]));
+  }
+
+  /** Rebuild a machine from serialize() output, ready to continue exactly where it was. */
+  static async deserialize(bytes) {
+    const raw = await gunzip(bytes);
+    if (new TextDecoder().decode(raw.subarray(0, 4)) !== 'LSNP') throw new Error('not a LisaEm snapshot');
+    const hlen = new DataView(raw.buffer, raw.byteOffset + 4, 4).getUint32(0);
+    const h = JSON.parse(new TextDecoder().decode(raw.subarray(8, 8 + hlen)));
+    let off = 8 + hlen;
+    const media = {};
+    for (const m of h.media) { media[m.path] = raw.slice(off, off + m.length); off += m.length; }
+    const heap = raw.slice(off, off + h.heapLength);
+    // Replay the setup exactly as it first happened, so the virtual filesystem's file handles and
+    // memory maps line up with the pointers stored in the snapshot's memory.
+    const lisa = await Lisa.create({ ramKB: h.opts.ramKB, clock: h.opts.epoch || undefined });
+    for (const o of h.setup) {
+      if (o.op === 'floppy') lisa.insertFloppy(media[o.path], o.path.slice(1));
+      else if (o.op === 'profile') lisa.mountProfile(media[o.path], o.path.slice(1));
+      else if (o.op === 'rom') lisa.loadROM(o.paths.length === 2 ? { lo: media[o.paths[0]], hi: media[o.paths[1]] } : media[o.path]);
+    }
+    return lisa.restore({ version: 1, heap, setup: h.setup, profilePath: h.profilePath, opts: h.opts });
+  }
+
   // ---- waiting -----------------------------------------------------------------------
 
   /**
@@ -467,4 +603,17 @@ function concat(parts) {
   let o = 0;
   for (const p of parts) { out.set(p, o); o += p.length; }
   return out;
+}
+
+async function gzip(u8) {
+  const cs = new CompressionStream('gzip');
+  const w = cs.writable.getWriter();
+  w.write(u8).catch(() => {}); w.close().catch(() => {}); // failures surface when the output is read
+  return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+}
+async function gunzip(u8) {
+  const ds = new DecompressionStream('gzip');
+  const w = ds.writable.getWriter();
+  w.write(u8).catch(() => {}); w.close().catch(() => {}); // failures surface when the output is read
+  return new Uint8Array(await new Response(ds.readable).arrayBuffer());
 }

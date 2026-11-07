@@ -317,3 +317,15 @@ test('audio: the demo is audible, does not clip, and has the same length however
   // Not compared sample by sample: the guest's timer-driven code lands on different cycles when the host's
   // slices differ (known: the music drifts out of phase from ~9 s), so only the length is pinned.
 });
+
+test('timing: the guest cannot tell how the host chops time into run() calls (the demo loader is timing sensitive)', { skip: skipAudio }, async () => {
+  const go = async (steps) => {
+    const lisa = await Lisa.create();
+    lisa.insertFloppy(readFileSync(demoPath)); lisa.loadROM(loadRomEnv()); lisa.powerOn({ boot: 'floppy' });
+    let t = 0; for (let i = 0; t < 45000; i++) { const dt = steps[i % steps.length]; lisa.run(dt); t += dt; }
+    return lisa.screen().hash();
+  };
+  const a = await go([100]), b = await go([16.7]), c = await go([5, 31, 12, 23, 8, 40]);
+  assert.equal(b, a, '16.7 ms calls reach the same screen as 100 ms calls');
+  assert.equal(c, a, 'irregular calls too');
+});

@@ -491,7 +491,10 @@ LISA_API int lisa_run(int cycles)
       slice_end = cpu68k_clocks + run_slice;
     }
 
-    want = (int32)((slice_end < target ? slice_end : target) - cpu68k_clocks);
+    /* Always run to the end of the slice, never to the end of the call: where run() calls begin and end
+       must not change what the guest sees (the demos' loaders are timing sensitive). A call may therefore
+       overshoot by up to a slice; the overshoot is carried over (see `ideal`). */
+    want = (int32)(slice_end - cpu68k_clocks);
     reg68k_external_execute(want);
 
     if (pc24 & 1)

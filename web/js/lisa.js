@@ -534,6 +534,9 @@ export class Lisa {
     this._audioBuf ??= this.core._malloc(65536 * 4);
   }
 
+  /** Diagnostic: linear makeup gain applied after the speaker response (default 1). */
+  audioSpeaker(gain) { this._c('audio_speaker', null, ['number'], [gain]); }
+
   /** Stop capturing audio. */
   audioStop() { this._c('audio_stop', null, [], []); this._audioRate = 0; }
 

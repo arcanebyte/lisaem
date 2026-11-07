@@ -45,5 +45,6 @@
  "_lisa_audio_state",
  "_lisa_audio_trace",
  "_lisa_audio_trace_take",
- "_lisa_set_slice"
+ "_lisa_set_slice",
+ "_lisa_audio_speaker"
 ]

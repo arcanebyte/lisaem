@@ -820,11 +820,14 @@ static audio_event_t *aud_trace; /* diagnostic: every event ever logged (while t
 static unsigned aud_trace_n, aud_trace_read;
 static audio_event_t aud_last;
 
+#define AUD_FIR 1025
 static struct
 {
   double phase, gain, dc, filtered;
   double a_gain, a_dc, a_lpf;
   double box[5]; /* last 5 AC-coupled carrier-mode samples */
+  double spk_hist[AUD_FIR]; /* the last AUD_FIR PCM-mode samples going through the speaker response */
+  unsigned spk_pos;
   unsigned box_i;
   uint8_t period, pattern, volume, flags;
   int64_t done; /* samples rendered so far */
@@ -878,6 +881,61 @@ void host_audio_changed(void)
 }
 
 /* A one-pole smoothing coefficient for time constant `tau` seconds at the output rate. */
+/* The speaker/recording response. A flat rendering of the PCM music sounds nothing like a real Lisa: compared
+   with a recording of the alisando demo on real hardware (long-term spectrum, three stretches of the demo, which
+   agree within ~2 dB), a flat rendering has ~25 dB too much below 200 Hz (the volume steps of the carrier-
+   modulation scheme make a huge rumble), a few dB too little at 300-500 Hz, 5-12 dB too much from 600 Hz to
+   2.5 kHz and ~20 dB too much above 3 kHz (the whine). So the PCM signal goes through the inverse: a linear-phase
+   FIR whose magnitude is this table (centre frequency in Hz, gain in dB), interpolated on a log-frequency axis. */
+static const double spk_eq[][2] = {
+  {30, -45}, {63, -24}, {79, -42}, {100, -42}, {126, -37}, {158, -32}, {200, -10.5}, {252, -7}, {317, 10.5}, {400, 7},
+  {504, 4.5}, {635, -5}, {800, -8}, {1008, -9}, {1270, -8}, {1600, -8.5}, {2016, -11}, {2540, -12.5}, {3200, -23},
+  {4032, -19}, {5080, -17}, {8000, -26}, {20000, -40}};
+static double spk_gain = 0.6; /* linear makeup gain on top of the table (chosen so the loudest passages peak near 0.7) */
+static double spk_fir[AUD_FIR];
+
+static double spk_eq_db(double hz)
+{
+  int k, n = (int)(sizeof spk_eq / sizeof spk_eq[0]);
+  if (hz <= spk_eq[0][0])
+    return spk_eq[0][1];
+  for (k = 1; k < n; k++)
+    if (hz <= spk_eq[k][0])
+    {
+      double t = log(hz / spk_eq[k - 1][0]) / log(spk_eq[k][0] / spk_eq[k - 1][0]);
+      return spk_eq[k - 1][1] + t * (spk_eq[k][1] - spk_eq[k - 1][1]);
+    }
+  return spk_eq[n - 1][1];
+}
+
+/* Design the FIR (frequency sampling + Blackman window) for the current sample rate. */
+static void audio_design_speaker(void)
+{
+  const int N = 2048, C = AUD_FIR / 2;
+  int i, k;
+  for (i = 0; i < AUD_FIR; i++)
+  {
+    double h = 0.0, w = 0.42 - 0.5 * cos(2.0 * 3.14159265358979 * i / (AUD_FIR - 1)) + 0.08 * cos(4.0 * 3.14159265358979 * i / (AUD_FIR - 1));
+    for (k = 0; k <= N / 2; k++)
+    {
+      double mag = pow(10.0, spk_eq_db((double)k * aud_rate / N) / 20.0);
+      h += (k == 0 || k == N / 2 ? 1.0 : 2.0) * mag * cos(2.0 * 3.14159265358979 * k * (i - C) / N);
+    }
+    spk_fir[i] = h / N * w;
+  }
+}
+
+static double audio_speaker_filter(double x)
+{
+  double y = 0.0;
+  int i;
+  aud.spk_hist[aud.spk_pos % AUD_FIR] = x;
+  for (i = 0; i < AUD_FIR; i++)
+    y += spk_fir[i] * aud.spk_hist[(aud.spk_pos + AUD_FIR - i) % AUD_FIR];
+  aud.spk_pos++;
+  return y;
+}
+
 static double audio_alpha(double tau) { return 1.0 - exp(-1.0 / (tau * aud_rate)); }
 
 /* Start (or restart) audio at the given output sample rate, from the current emulated time. */
@@ -889,6 +947,7 @@ LISA_API void lisa_audio_start(int rate)
   aud_rate = rate;
   memset(&aud, 0, sizeof aud);
   /* Time constants chosen to reproduce the macOS patch's per-sample constants at 44.1 kHz. */
+  audio_design_speaker();
   aud.a_gain = audio_alpha(1.0 / (44100.0 * -log(1.0 - 0.025)));
   aud.a_dc = audio_alpha(1.0 / (44100.0 * -log(1.0 - 0.003)));
   aud.a_lpf = audio_alpha(1.0 / (44100.0 * -log(1.0 - 0.32)));
@@ -899,11 +958,24 @@ LISA_API void lisa_audio_start(int rate)
   aud.done = (int64_t)((double)cpu68k_clocks * rate / LISA_CYCLES_PER_SECOND); /* no burst of catch-up audio */
 }
 
+/* Makeup gain after the speaker response (diagnostic). Takes effect immediately. */
+LISA_API void lisa_audio_speaker(double gain) { spk_gain = gain; }
+
 LISA_API void lisa_audio_stop(void) { aud_rate = 0; }
 
 /* Render the audio for the emulated time that has passed since the last call, up to `max` samples
    (mono, float, about +-0.3 at full volume). Returns the number of samples written; call again if it
    returned `max` and you want the rest. */
+#define AUD_CARRIER_SCALE (0.50 / 3.5)
+
+/* The level the carrier-mode signal has while the speaker registers are as in event `e` (0 if not in that mode). */
+static double audio_event_level(const audio_event_t *e)
+{
+  int enabled = (e->flags & 1) && e->pattern && e->pattern != 255;
+  double bit_rate = ((e->flags & 2) ? 625000.0 : 500000.0) / (2.0 * (e->period + 2));
+  return (enabled && bit_rate / audio_pattern_bits(e->pattern) >= 8000.0) ? (e->volume - 3.5) * AUD_CARRIER_SCALE : 0.0;
+}
+
 LISA_API int lisa_audio_render(float *out, int max)
 {
   int64_t available;
@@ -923,12 +995,25 @@ LISA_API int lisa_audio_render(float *out, int max)
     f0 = bit_rate / audio_pattern_bits(aud.pattern); /* the waveform's fundamental */
     if (enabled && f0 >= 8000.0)
     {
-      /* Ultrasonic carrier: the volume is a 3-bit sample (centred, as the project's own renderer does). */
-      signal = (aud.volume - 3.5) * (0.50 / 3.5);
+      /* Ultrasonic carrier: the volume is a 3-bit sample (centred, as the project's own renderer does).
+         The output sample is the exact time-average of the held level over its window, not the level at
+         one instant: sampling would move every volume step to the 44.1 kHz grid, which adds timing noise of
+         several percent to music whose own sample period is only ~1700 cycles, and it sounds like a whine. */
+      {
+        double clk1 = (double)(aud.done + 1) * LISA_CYCLES_PER_SECOND / aud_rate, cur = clk, level = (aud.volume - 3.5) * AUD_CARRIER_SCALE, acc = 0.0;
+        unsigned k;
+        for (k = aud_t; k != aud_h && (double)aud_ev[k % AUDIO_EVENTS].clk < clk1; k++)
+        {
+          acc += level * ((double)aud_ev[k % AUDIO_EVENTS].clk - cur);
+          cur = (double)aud_ev[k % AUDIO_EVENTS].clk;
+          level = audio_event_level(&aud_ev[k % AUDIO_EVENTS]);
+        }
+        acc += level * (clk1 - cur);
+        signal = acc / (clk1 - clk);
+      }
       aud.gain = aud.volume * (0.45 / 7.0); /* keep the tone regime's gain continuous if we switch back */
       aud.dc += aud.a_dc * (signal - aud.dc);
-      aud.box[aud.box_i++ % 5] = signal - aud.dc;
-      aud.filtered = (aud.box[0] + aud.box[1] + aud.box[2] + aud.box[3] + aud.box[4]) / 5.0;
+      aud.filtered = signal - aud.dc;
     }
     else
     {
@@ -942,7 +1027,13 @@ LISA_API int lisa_audio_render(float *out, int max)
       aud.filtered += aud.a_lpf * (signal - aud.dc - aud.filtered);
       aud.box[aud.box_i++ % 5] = 0.0; /* so a later switch to carrier mode starts from silence */
     }
-    out[n++] = (float)aud.filtered;
+    {
+      /* speaker response, for the PCM (carrier) signal only: the tone regime keeps its own shaping. The filter
+         keeps running in tone mode (fed silence) so its ringing dies away instead of clicking. */
+      int pcm = enabled && f0 >= 8000.0;
+      double y = audio_speaker_filter(pcm ? aud.filtered : 0.0) * spk_gain;
+      out[n++] = (float)(pcm ? y : aud.filtered + y);
+    }
     aud.done++;
   }
   return n;

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LisaEm Web</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>LisaEm <em>Web</em></h1></div>
+    <div class="status" role="status" aria-live="polite">
+      <button id="btnPanel" class="ghost" aria-expanded="true" aria-controls="panel">Controls</button>
+      <span class="chip" id="chipPower">Off</span>
+      <span class="chip" id="chipTime">0.0 s</span>
+      <span class="chip" id="chipOS">—</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="stage" aria-label="Apple Lisa display">
+      <div class="screen" id="screenWrap">
+        <canvas id="screen" width="720" height="500" tabindex="0" aria-label="Lisa screen. Click to capture the keyboard."></canvas>
+        <div class="hint" id="hint">Drop a disk image here, or choose one in Controls</div>
+      </div>
+      <p class="kbhelp" id="kbhelp">Click the screen to type. <kbd>Ctrl</kbd>/<kbd>⌘</kbd> = Apple key, <kbd>Alt</kbd> = Option, <kbd>Esc</kbd> = Clear.</p>
+    </section>
+
+    <aside class="panel" id="panel">
+      <section class="card">
+        <h2>Boot ROM <span class="renderer" id="romState">none</span></h2>
+        <label class="file" id="dropRom">
+          <input type="file" id="fileRom" multiple hidden>
+          <span id="romName">Optional: your Lisa boot ROM (16 KB, or .lo + .hi)…</span>
+        </label>
+        <div class="row">
+          <label class="inline">After power-on
+            <select id="romBoot">
+              <option value="floppy">boot floppy</option>
+              <option value="profile">boot hard disk</option>
+              <option value="none">stop at ROM menu</option>
+            </select>
+          </label>
+          <button id="btnFolderRom" hidden>Use ROM from folder</button>
+          <button id="btnForgetRom" hidden>Forget ROM</button>
+        </div>
+        <p class="note">Without a ROM the emulator boots floppies directly (ROM-less). ROMs are not included; a ROM you choose stays in this browser only.</p>
+      </section>
+
+      <section class="card">
+        <h2>Floppy disk</h2>
+        <label class="file" id="dropFloppy">
+          <input type="file" id="fileFloppy" accept=".dc42,.dc,.img,.image,.dsk,.raw,*/*" hidden>
+          <span id="floppyName">Choose or drop a DiskCopy 4.2 image…</span>
+        </label>
+        <div class="row" id="localRow" hidden>
+          <select id="localDisks" aria-label="Local disk images"></select>
+          <button id="btnLocal" title="Insert as a floppy and boot it">Load</button>
+          <button id="btnLocalProfile" title="Mount as a ProFile hard disk and boot from it">As ProFile</button>
+        </div>
+        <div class="row">
+          <button class="primary" id="btnBootFloppy" disabled>Boot floppy</button>
+          <button id="btnProfile">ProFile…</button>
+          <input type="file" id="fileProfile" hidden>
+        </div>
+        <p class="note" id="profileName"></p>
+      </section>
+
+      <section class="card">
+        <h2>Machine</h2>
+        <div class="row">
+          <button id="btnPause" disabled>Pause</button>
+          <button id="btnReset" disabled>Reset</button>
+          <button id="btnShot" disabled>Screenshot</button>
+        </div>
+        <div class="row">
+          <label class="inline">Speed
+            <select id="speed">
+              <option value="0.25">¼×</option><option value="0.5">½×</option>
+              <option value="1" selected>1×</option><option value="2">2×</option>
+              <option value="4">4×</option><option value="8">8×</option>
+            </select>
+          </label>
+          <label class="inline"><input type="checkbox" id="sound"> Sound</label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Display <span class="renderer" id="renderer"></span></h2>
+        <div class="row">
+          <label class="inline">Aspect
+            <select id="aspect"></select>
+          </label>
+          <label class="inline">Effect
+            <select id="fxPreset">
+              <option value="clean">Clean</option><option value="soft">Soft CRT</option>
+              <option value="crt">Strong CRT</option><option value="custom">Custom</option>
+            </select>
+          </label>
+        </div>
+        <details class="tune">
+          <summary>Tune</summary>
+          <label class="slider">Curvature <input type="range" id="fxCurve" min="0" max="0.2" step="0.005"></label>
+          <label class="slider">Scanlines <input type="range" id="fxScan" min="0" max="1" step="0.05"></label>
+          <label class="slider">Glow <input type="range" id="fxGlow" min="0" max="1" step="0.05"></label>
+          <label class="slider">Mask <input type="range" id="fxMask" min="0" max="1" step="0.05"></label>
+          <label class="slider">Vignette <input type="range" id="fxVig" min="0" max="1" step="0.05"></label>
+        </details>
+      </section>
+
+      <section class="card">
+        <h2>Type text</h2>
+        <textarea id="pasteText" rows="3" placeholder="Text typed on the Lisa keyboard (Enter = Return)"></textarea>
+        <div class="row"><button id="btnType" disabled>Type it</button></div>
+      </section>
+
+      <section class="card">
+        <h2>Script it</h2>
+        <p class="note">The page exposes <code>window.lisaAuto</code>. Open the browser console:</p>
+        <pre class="code" id="snippet">await lisaAuto.pause();               // stop real-time running
+lisaAuto.type('hello\n');
+await lisaAuto.click(600, 216);       // Lisa pixels
+await lisaAuto.run(2000);             // 2 s of Lisa time
+lisaAuto.screenshot();                // PNG data URL
+lisaAuto.ascii();                     // screen as text</pre>
+      </section>
+
+      <section class="card">
+        <h2>Messages</h2>
+        <pre class="log" id="log" aria-live="polite"></pre>
+      </section>
+    </aside>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

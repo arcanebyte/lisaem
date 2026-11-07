@@ -123,6 +123,12 @@ The bitsavers copy of Rev H is byte-identical to the ROM pair used while develop
 
 Not tried: ROM revisions other than 2.H, and the 3A/XL ROM (tested only with a stand-in).
 
+## Phones and tablets, and static hosting
+
+The page works on phones and tablets: a touch is a mouse click (the pointer moves first and the button goes down once the Lisa's pointer has arrived, since the COPS only gives the guest relative motion), dragging drags, and there is a bar of Lisa keys (Apple, Option and Shift are sticky; Clear, Return, Enter, Tab, Backspace, arrows) plus a Keyboard button that raises the phone's own keyboard. In landscape the screen takes the whole height. "Add to Home Screen" gives a full-screen app. On iOS, sound plays even with the ringer switch off.
+
+`node build-pages.mjs <dir>` writes the UI as a plain static site (relative URLs only, so any sub-path works, no ROMs or disks included) for GitHub Pages or any static host. There the ROM download and media-folder features, which need `serve.mjs`, are hidden; you choose your own disk and ROM files, which stay in the browser.
+
 ## Snapshots
 
 ```js

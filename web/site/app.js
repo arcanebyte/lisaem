@@ -55,13 +55,17 @@ function applyFx(preset, fx) {
   applyFx(saved.preset, saved.fx);
   if (store.get('panel', true) === false) { $('btnPanel').setAttribute('aria-expanded', 'false'); document.querySelector('.layout').classList.add('nopanel'); }
 }
+const narrow = matchMedia('(max-width: 900px)');
+const coarse = matchMedia('(pointer: coarse)');
+function setPanel(show, persist = true) {
+  document.querySelector('.layout').classList.toggle('nopanel', !show);
+  $('btnPanel').setAttribute('aria-expanded', String(show));
+  if (persist) store.set('panel', show);
+}
 $('aspect').addEventListener('change', (e) => { display.setAspect(e.target.value); store.set('aspect', e.target.value); });
 $('fxPreset').addEventListener('change', (e) => { if (e.target.value !== 'custom') applyFx(e.target.value, PRESETS[e.target.value]); else applyFx('custom', display.fx); });
 for (const [k, id] of Object.entries(sliders)) $(id).addEventListener('input', (e) => applyFx('custom', { [k]: +e.target.value }));
-$('btnPanel').addEventListener('click', () => {
-  const lay = document.querySelector('.layout'), hide = !lay.classList.contains('nopanel');
-  lay.classList.toggle('nopanel', hide); $('btnPanel').setAttribute('aria-expanded', String(!hide)); store.set('panel', !hide);
-});
+$('btnPanel').addEventListener('click', () => setPanel(document.querySelector('.layout').classList.contains('nopanel')));
 
 function updateStatus() {
   const on = !!lisa && !stopped;
@@ -104,6 +108,7 @@ async function newMachine() {
   $('hint').classList.add('gone');
   paused = false; $('btnPause').textContent = 'Pause';
   setEnabled(true);
+  if (narrow.matches) { setPanel(false, false); canvas.scrollIntoView({ block: 'nearest' }); }
   return true;
 }
 
@@ -152,8 +157,9 @@ async function ensureSound() {
 // Sound defaults to on (remembered after that). Browsers keep audio suspended until the page has had a
 // click or key press, so the context is created up front and resumed by the first gesture.
 $('sound').checked = store.get('sound', true);
-for (const ev of ['pointerdown', 'keydown']) {
-  addEventListener(ev, () => { if ($('sound').checked && sound.ctx?.state === 'suspended') sound.ctx.resume(); }, { capture: true });
+try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* Safari only: sound plays even with the ringer switch off */ }
+for (const ev of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
+  addEventListener(ev, () => { const st = sound.ctx?.state; if ($('sound').checked && (st === 'suspended' || st === 'interrupted')) sound.ctx.resume().catch(() => {}); }, { capture: true });
 }
 
 function pumpSound() {
@@ -173,6 +179,7 @@ function frame(ts) {
   lastTs = ts;
   if (lisa && !paused && !stopped) {
     handleStatus(lisa.run(dt * speed));
+    touchTick(ts);
     drawScreen();
     pumpSound();
   }
@@ -479,7 +486,7 @@ const romReady = (async () => {
     romCatalog = await r.json();
     $('romChoice').innerHTML = romCatalog.roms.map((x) => `<option value="${x.id}">${x.label}</option>`).join('');
     $('romChoice').value = romCatalog.default;
-    $('romHost').textContent = new URL(romCatalog.source).host;
+    $('romHost').textContent = new URL(romCatalog.source).host; $('romFrom').hidden = false;
     $('romDefault').hidden = false;
     $('btnFetchRom').disabled = !romCatalog.fetchAllowed;
     showRomNote();
@@ -536,14 +543,125 @@ function lisaXY(e) {
   // Through the display so aspect, scaling and CRT curvature are all accounted for.
   return display.toSource(e.clientX, e.clientY, screenW, screenH);
 }
-canvas.addEventListener('pointermove', (e) => { const p = lisa && lisaXY(e); if (p) lisa.mouseMove(...p); });
-canvas.addEventListener('pointerdown', (e) => {
-  canvas.focus(); canvas.setPointerCapture(e.pointerId);
-  const p = lisa && lisaXY(e); if (p) lisa.mouseDown(...p);
-  e.preventDefault();
+// A mouse (or pen) was already hovering, so the Lisa's pointer is where it should be when the button goes
+// down. A finger is not: it lands and clicks in one go, and the Lisa's mouse only gets *relative* motion from
+// the COPS, so it needs a moment to catch up. A touch therefore moves the pointer first, presses once the
+// guest's pointer has arrived (or after 400 ms), and holds the button for at least 100 ms.
+let touch = null;           // { id, x, y, t0, down, tDown, released }
+function touchTick(now) {
+  const t = touch;
+  if (!t || !lisa) return;
+  if (!t.down) {
+    const q = lisa.pointer();
+    if ((Math.abs(q.x - t.x) <= 4 && Math.abs(q.y - t.y) <= 4) || now - t.t0 > 400) { lisa.mouseDown(t.x, t.y); t.down = true; t.tDown = now; }
+  } else if (t.released && now - t.tDown >= 100) { lisa.mouseUp(t.x, t.y); touch = null; }
+}
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch') { if (touch?.id === e.pointerId && lisa) { const p = lisaXY(e); touch.x = p[0]; touch.y = p[1]; lisa.mouseMove(p[0], p[1]); } return; }
+  const p = lisa && lisaXY(e); if (p) lisa.mouseMove(...p);
 });
-canvas.addEventListener('pointerup', (e) => { const p = lisa && lisaXY(e); if (p) lisa.mouseUp(...p); });
+canvas.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (e.pointerType === 'touch') {
+    if (!lisa || !e.isPrimary || touch) return;             // one finger at a time
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* the pointer already ended */ }
+    const p = lisaXY(e); lisa.mouseMove(p[0], p[1]);
+    touch = { id: e.pointerId, x: p[0], y: p[1], t0: performance.now(), down: false, released: false };
+    return;
+  }
+  canvas.focus(); try { canvas.setPointerCapture(e.pointerId); } catch { /* the pointer already ended */ }
+  const p = lisa && lisaXY(e); if (p) lisa.mouseDown(...p);
+});
+function touchEnd(e) {
+  if (touch?.id !== e.pointerId) return;
+  if (e.type === 'pointerup') { const p = lisa && lisaXY(e); if (p) { touch.x = p[0]; touch.y = p[1]; } }
+  touch.released = true;                                    // touchTick lets go once the press has been held long enough
+}
+canvas.addEventListener('pointerup', (e) => {
+  if (e.pointerType === 'touch') return touchEnd(e);
+  const p = lisa && lisaXY(e); if (p) lisa.mouseUp(...p);
+});
+canvas.addEventListener('pointercancel', touchEnd);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ---- on-screen keys (phones and tablets) ------------------------------------------------------------
+//
+// The Lisa keys a phone keyboard lacks (Apple, Option, Clear, Enter, arrows) are buttons. Apple, Option and
+// Shift are sticky: tap one, then the key (or the text) it applies to, and it lets go by itself. The phone's
+// own keyboard is carried by a hidden text field: whatever it adds or removes is typed on the Lisa.
+
+const kb = { mods: new Set() };
+const keyCode = (name) => KEYMAP[{ command: 'MetaLeft', option: 'AltLeft', shift: 'ShiftLeft', clear: 'Escape', return: 'Enter', enter: 'NumpadEnter', tab: 'Tab', backspace: 'Backspace', left: 'ArrowLeft', up: 'ArrowUp', down: 'ArrowDown', right: 'ArrowRight' }[name]];
+
+function releaseMods() {
+  for (const m of kb.mods) lisa?.key(keyCode(m), false);
+  kb.mods.clear();
+  for (const b of document.querySelectorAll('button.mod')) b.setAttribute('aria-pressed', 'false');
+}
+/** Run `send` (which queues keys or text) with the sticky modifiers held, then let them go. */
+function withMods(send) {
+  if (!lisa) return;
+  for (const m of kb.mods) lisa.key(keyCode(m), true);
+  send();
+  releaseMods();
+}
+for (const b of document.querySelectorAll('button.mod')) {
+  b.addEventListener('click', () => {
+    const m = b.dataset.mod, on = !kb.mods.has(m);
+    on ? kb.mods.add(m) : kb.mods.delete(m);
+    b.setAttribute('aria-pressed', String(on));
+    if (!on) lisa?.key(keyCode(m), false);
+  });
+}
+for (const b of document.querySelectorAll('button[data-key]')) {
+  b.addEventListener('click', () => withMods(() => lisa.tap(keyCode(b.dataset.key))));
+}
+// keep a tapped button from stealing focus from the phone keyboard (which would close it)
+$('keybar').addEventListener('pointerdown', (e) => { if (e.target.closest('button') && e.target.closest('button') !== $('kbToggle') && document.activeElement === $('kbInput')) e.preventDefault(); });
+
+const SENTINEL = '\u200b';   // always present, so Backspace has something to delete even when nothing was typed
+const kbInput = $('kbInput');
+let kbSent = SENTINEL;       // what the field held when we last looked
+function kbReset() { kbInput.value = kbSent = SENTINEL; kbInput.setSelectionRange(1, 1); }
+kbInput.addEventListener('input', (e) => {
+  if (!lisa) return;
+  const now = kbInput.value;
+  let i = 0; while (i < kbSent.length && i < now.length && kbSent[i] === now[i]) i++;
+  const erased = kbSent.length - i, added = now.slice(i).replace(/\u200b/g, '');
+  withMods(() => {
+    for (let n = 0; n < erased; n++) lisa.tap(keyCode('backspace'));
+    if (added) lisa.type(added.replace(/\r?\n/g, '\n'));
+  });
+  kbSent = now;
+  if (!e.isComposing && now.length > 64) kbReset();         // the diff is cheap, but do not let it grow for ever
+});
+kbInput.addEventListener('compositionend', () => kbReset());
+// a hardware keyboard on a tablet: keys that make no text go straight through; the rest arrive as text above
+kbInput.addEventListener('keydown', (e) => {
+  if (e.isComposing || e.keyCode === 229) return;
+  const code = KEYMAP[e.code];
+  const special = /^(Escape|Arrow|Tab$|Enter$|Backspace$)/.test(e.code) || e.ctrlKey || e.metaKey || e.altKey;
+  if (!special || code === undefined || !lisa) return;
+  e.preventDefault();
+  if (!e.repeat && !held.has(code)) { held.add(code); lisa.key(code, true); }
+});
+kbInput.addEventListener('keyup', (e) => {
+  const code = KEYMAP[e.code];
+  if (code !== undefined && held.delete(code)) { e.preventDefault(); lisa?.key(code, false); }
+});
+function showKeyboard(on) {
+  $('kbToggle').setAttribute('aria-pressed', String(on));
+  if (on) { kbReset(); kbInput.focus({ preventScroll: true }); $('keybar').classList.add('show'); } else kbInput.blur();
+}
+$('kbToggle').addEventListener('click', () => showKeyboard(document.activeElement !== kbInput));
+kbInput.addEventListener('blur', () => $('kbToggle').setAttribute('aria-pressed', 'false'));
+// a tap on the screen after the keyboard has been opened should not lose it: typing stays where it was
+
+// ---- full screen (where the browser allows it: not iPhone Safari, which has Add to Home Screen instead) ----
+if (document.fullscreenEnabled) {
+  $('btnFull').hidden = false;
+  $('btnFull').addEventListener('click', () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen({ navigationUI: 'hide' })).catch(() => {}));
+}
 
 // ---- scripting API for the console / browser automation ---------------------------------
 //

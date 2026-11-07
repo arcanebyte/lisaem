@@ -2,7 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="LisaEm">
+  <meta name="description" content="An Apple Lisa emulator that runs in the browser, on desktop and phones.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <title>LisaEm Web</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -12,8 +21,9 @@
     <div class="status" role="status" aria-live="polite">
       <button id="btnPanel" class="ghost" aria-expanded="true" aria-controls="panel">Controls</button>
       <span class="chip" id="chipPower">Off</span>
-      <span class="chip" id="chipTime">0.0 s</span>
-      <span class="chip" id="chipOS">—</span>
+      <span class="chip opt" id="chipTime">0.0 s</span>
+      <span class="chip opt" id="chipOS">—</span>
+      <button id="btnFull" class="ghost icon" hidden title="Full screen" aria-label="Full screen">⛶</button>
     </div>
   </header>
 
@@ -21,9 +31,26 @@
     <section class="stage" aria-label="Apple Lisa display">
       <div class="screen" id="screenWrap">
         <canvas id="screen" width="720" height="500" tabindex="0" aria-label="Lisa screen. Click to capture the keyboard."></canvas>
-        <div class="hint" id="hint">Drop a disk image here, or choose one in Controls</div>
+        <div class="hint" id="hint"><span class="only-fine">Drop a disk image here, or choose one in Controls</span><span class="only-coarse">Tap <b>Controls</b>, choose a disk image, then Power on</span></div>
       </div>
-      <p class="kbhelp" id="kbhelp">Click the screen to type. <kbd>Ctrl</kbd>/<kbd>⌘</kbd> = Apple key, <kbd>Alt</kbd> = Option, <kbd>Esc</kbd> = Clear.</p>
+      <div class="keybar" id="keybar" role="toolbar" aria-label="Lisa keys">
+        <button id="kbToggle" class="kb wide" aria-pressed="false" title="Show the on-screen keyboard">⌨ Keyboard</button>
+        <button class="kb mod" data-mod="command" aria-pressed="false" title="Apple key (hold for the next key)">⌘ Apple</button>
+        <button class="kb mod" data-mod="option" aria-pressed="false" title="Option key (hold for the next key)">⌥ Option</button>
+        <button class="kb mod" data-mod="shift" aria-pressed="false" title="Shift (hold for the next key)">⇧ Shift</button>
+        <button class="kb" data-key="clear" title="Clear (the Escape key)">Clear</button>
+        <button class="kb" data-key="return">Return</button>
+        <button class="kb" data-key="enter">Enter</button>
+        <button class="kb" data-key="tab">Tab</button>
+        <button class="kb" data-key="backspace" aria-label="Backspace">⌫</button>
+        <button class="kb" data-key="left" aria-label="Left">←</button>
+        <button class="kb" data-key="up" aria-label="Up">↑</button>
+        <button class="kb" data-key="down" aria-label="Down">↓</button>
+        <button class="kb" data-key="right" aria-label="Right">→</button>
+      </div>
+      <textarea id="kbInput" class="kbinput" rows="1" aria-label="Typing on the Lisa keyboard" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter"></textarea>
+      <p class="kbhelp only-fine" id="kbhelp">Click the screen to type. <kbd>Ctrl</kbd>/<kbd>⌘</kbd> = Apple key, <kbd>Alt</kbd> = Option, <kbd>Esc</kbd> = Clear.</p>
+      <p class="kbhelp only-coarse">Tap the screen to click, drag to drag. Double-tap to double-click.</p>
     </section>
 
     <aside class="panel" id="panel">
@@ -78,7 +105,7 @@
             <select id="localDisks" aria-label="Disk images in the media folder"></select>
             <button id="btnInsertLocal" title="Put it in the floppy slot, or the hard disk slot if it is big enough to be a ProFile">Insert</button>
           </div>
-          <p class="note">Drop a disk image anywhere on the screen to load it and power on.</p>
+          <p class="note"><span class="only-fine">Drop a disk image anywhere on the screen to load it and power on. </span>Disk images stay in this browser; nothing is uploaded.</p>
 
           <details class="sub" data-card="changes">
             <summary>Changes the Lisa makes to disks</summary>
@@ -112,7 +139,7 @@
             <label class="inline"><input type="checkbox" id="autoRom" checked> Download the default ROM automatically when none is loaded</label>
           </div>
           <div class="row"><button id="btnFolderRom" hidden>Use ROM from folder</button></div>
-          <p class="note">Optional: with no ROM, disks boot directly. Downloads come from <span id="romHost">bitsavers</span> through this page's own server. Or choose your own: a 16 KB file, or a .lo and a .hi pair. A ROM stays in this browser only.</p>
+          <p class="note">Optional: with no ROM, disks boot directly. <span id="romFrom" hidden>Downloads come from <span id="romHost">bitsavers</span> through this page's own server. Or </span>Choose your own: a 16 KB file, or a .lo and a .hi pair. A ROM stays in this browser only.</p>
         </div>
       </details>
 

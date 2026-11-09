@@ -322,10 +322,22 @@ test('timing: the guest cannot tell how the host chops time into run() calls (th
   const go = async (steps) => {
     const lisa = await Lisa.create();
     lisa.insertFloppy(readFileSync(demoPath)); lisa.loadROM(loadRomEnv()); lisa.powerOn({ boot: 'floppy' });
-    let t = 0; for (let i = 0; t < 45000; i++) { const dt = steps[i % steps.length]; lisa.run(dt); t += dt; }
+    // stop at exactly 45 s whatever the call size: the demo is alive now, so one extra millisecond shows on screen
+    let t = 0; for (let i = 0; t < 45000; i++) { const dt = Math.min(steps[i % steps.length], 45000 - t); lisa.run(dt); t += dt; }
     return lisa.screen().hash();
   };
   const a = await go([100]), b = await go([16.7]), c = await go([5, 31, 12, 23, 8, 40]);
   assert.equal(b, a, '16.7 ms calls reach the same screen as 100 ms calls');
   assert.equal(c, a, 'irregular calls too');
+});
+
+test('the demo runs on, it does not stop at its exception screen ("ALISANDO EXCEPTION DIAGNOSTIC")', { skip: skipAudio }, async () => {
+  // That screen never changes, so a running demo is one whose screen keeps moving. (The published site once shipped a
+  // core built from another source tree that hit it a few seconds in.)
+  const lisa = await Lisa.create();
+  lisa.insertFloppy(readFileSync(demoPath)); lisa.loadROM(loadRomEnv()); lisa.powerOn({ boot: 'floppy' });
+  lisa.run(30000);
+  const seen = new Set();
+  for (let i = 0; i < 20; i++) { lisa.run(250); seen.add(lisa.screen().hash()); }
+  assert.ok(seen.size >= 3, `the demo's screen keeps changing (saw ${seen.size} distinct frames)`);
 });

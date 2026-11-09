@@ -29,6 +29,15 @@ const site = ['index.html', 'app.js', 'display.js', 'store.js', 'audio-worklet.j
   'icon.svg', 'icon-512.png', 'apple-touch-icon.png', 'manifest.webmanifest'];
 const rewrite = (text, pairs) => pairs.reduce((t, [a, b]) => { if (!t.includes(a)) throw new Error(`expected ${a}`); return t.replaceAll(a, b); }, text);
 
+// The core's error strings carry the path of the source tree it was built from. dist/ was once overwritten by a
+// build of another checkout (which lacked fixes, and the published demo crashed), so refuse a foreign core.
+{
+  const wasm = (await readFile(join(root, 'dist/lisa-core.wasm'))).toString('latin1');
+  const built = [...wasm.matchAll(/(\/[\w.\-\/ ]*?)\/src\/lisa\/cpu_board\/romless\.c/g)].map((m) => m[1]);
+  const here = resolve(root, '..');
+  if (!built.length || built.some((p) => p !== here)) throw new Error(`dist/lisa-core.wasm was not built from ${here} (built from: ${built.join(', ') || 'unknown'}). Run \`make -B\` in web/.`);
+}
+
 await rm(out, { recursive: true, force: true });
 await mkdir(join(out, 'js'), { recursive: true });
 await mkdir(join(out, 'dist'), { recursive: true });

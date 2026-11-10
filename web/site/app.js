@@ -46,8 +46,9 @@ const sliders = { curve: 'fxCurve', scan: 'fxScan', glow: 'fxGlow', mask: 'fxMas
 // the Edge slider has named stops: A hard (0), B crisp (1.5, the default), C soft (4)
 function showEdge(v) {
   v = Number.isFinite(+v) ? +v : EDGES.B; $('fxEdge').value = v;
-  const name = v === EDGES.A ? 'A. Hard' : v === EDGES.B ? 'B. Crisp' : v === EDGES.C ? 'C. Soft' : `${v} px`;
-  $('edgeName').textContent = `Edge: ${name}  (A hard, B crisp, C soft)`;
+  const near = (x) => Math.abs(v - x) < 0.025;
+  const name = near(EDGES.A) ? 'A. Hard' : near(EDGES.B) ? 'B. Crisp' : near(EDGES.C) ? 'C. Soft' : `${v.toFixed(2).replace(/0$/, '')} px`;
+  $('edgeName').textContent = `Edge: ${name}  (stops: A hard, B crisp, C soft)`;
 }
 function syncFxUI(fx) { for (const [k, id] of Object.entries(sliders)) $(id).value = fx[k]; showEdge(fx.edge); }
 function applyFx(preset, fx) {

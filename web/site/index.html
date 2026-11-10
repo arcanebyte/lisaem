@@ -155,7 +155,8 @@
               </select>
             </label>
           </div>
-          <label class="slider">Edge <input type="range" id="fxEdge" min="0" max="6" step="0.5" aria-label="How sharp the picture's edge is" aria-describedby="edgeName"></label>
+          <label class="slider">Edge <input type="range" id="fxEdge" min="0" max="6" step="0.05" list="edgeStops" aria-label="How sharp the picture's edge is" aria-describedby="edgeName"></label>
+          <datalist id="edgeStops"><option value="0" label="A"></option><option value="1.5" label="B"></option><option value="4" label="C"></option></datalist>
           <p class="note edgenote" id="edgeName"></p>
           <label class="slider">Border <input type="range" id="fxBorder" min="0" max="0.15" step="0.005" aria-label="Size of the black border around the screen"></label>
           <details class="sub tune" data-card="tune">

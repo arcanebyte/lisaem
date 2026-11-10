@@ -1,6 +1,6 @@
 // LisaEm Web: browser front end for the LisaEm core (WebAssembly).
 import { Lisa, KEYMAP, SCREEN_W, SCREEN_H } from '../js/lisa.js';
-import { Display, ASPECTS, PRESETS } from './display.js';
+import { Display, ASPECTS, PRESETS, EDGES } from './display.js';
 import { idbGet, idbPut, idbDel } from './store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -43,7 +43,13 @@ const store = {
 };
 $('aspect').innerHTML = Object.entries(ASPECTS).map(([k, a]) => `<option value="${k}">${a.label}</option>`).join('');
 const sliders = { curve: 'fxCurve', scan: 'fxScan', glow: 'fxGlow', mask: 'fxMask', vignette: 'fxVig', border: 'fxBorder' };
-function syncFxUI(fx) { for (const [k, id] of Object.entries(sliders)) $(id).value = fx[k]; }
+// the Edge slider has named stops: A hard (0), B crisp (1.5, the default), C soft (4)
+function showEdge(v) {
+  v = Number.isFinite(+v) ? +v : EDGES.B; $('fxEdge').value = v;
+  const name = v === EDGES.A ? 'A. Hard' : v === EDGES.B ? 'B. Crisp' : v === EDGES.C ? 'C. Soft' : `${v} px`;
+  $('edgeName').textContent = `Edge: ${name}  (A hard, B crisp, C soft)`;
+}
+function syncFxUI(fx) { for (const [k, id] of Object.entries(sliders)) $(id).value = fx[k]; showEdge(fx.edge); }
 function applyFx(preset, fx) {
   $('fxPreset').value = preset; display.setEffects(fx); syncFxUI(display.fx);
   store.set('fx', { preset, fx: display.fx });
@@ -64,6 +70,8 @@ function setPanel(show, persist = true) {
 }
 $('aspect').addEventListener('change', (e) => { display.setAspect(e.target.value); store.set('aspect', e.target.value); });
 $('fxPreset').addEventListener('change', (e) => { if (e.target.value !== 'custom') applyFx(e.target.value, PRESETS[e.target.value]); else applyFx('custom', display.fx); });
+// the edge style is its own choice: changing a preset keeps it
+$('fxEdge').addEventListener('input', (e) => { display.setEffects({ edge: +e.target.value }); showEdge(+e.target.value); store.set('fx', { preset: $('fxPreset').value, fx: display.fx }); });
 for (const [k, id] of Object.entries(sliders)) $(id).addEventListener('input', (e) => applyFx('custom', { [k]: +e.target.value }));
 $('btnPanel').addEventListener('click', () => setPanel(document.querySelector('.layout').classList.contains('nopanel')));
 

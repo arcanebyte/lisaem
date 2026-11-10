@@ -94,6 +94,7 @@ select { max-width: 100%; }
 .inline { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
 .slider { display: grid; grid-template-columns: 84px 1fr; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; }
 .slider input { width: 100%; }
+.edgenote { margin: 2px 0 0; font-size: 12px; }
 .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
 .code { white-space: pre; }
 .code, .log { margin: 8px 0 0; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: 12px/1.5 ui-monospace, Menlo, monospace; overflow: auto; white-space: pre-wrap; }

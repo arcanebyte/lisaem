@@ -12,6 +12,9 @@ export const ASPECTS = {
   fourThree: { label: '4:3', ratio: 4 / 3 },
 };
 
+// Named stops of the Edge slider (device pixels of softening at the picture's edge): A hard, B crisp (default), C soft.
+export const EDGES = { A: 0, B: 1.5, C: 4, max: 6 };
+
 export const PRESETS = {
   clean:  { curve: 0,    scan: 0,    glow: 0,    mask: 0,    vignette: 0,    border: 0.03 },
   soft:   { curve: 0.04, scan: 0.35, glow: 0.35, mask: 0.12, vignette: 0.25, border: 0.05 },
@@ -27,7 +30,7 @@ precision highp float;
 uniform sampler2D uTex;      // R8: 1.0 where the Lisa pixel is black ink
 uniform vec2 uTexSize;       // framebuffer size in Lisa pixels
 uniform vec2 uOut;           // canvas size in device pixels
-uniform float uCurve, uScan, uGlow, uMask, uVig, uBorder; // uBorder: black margin on each side, as a fraction of the canvas
+uniform float uCurve, uScan, uGlow, uMask, uVig, uBorder, uEdge; // uBorder: black margin on each side, as a fraction of the canvas
 uniform vec3 uPaper, uInk;
 in vec2 vUV; out vec4 o;
 
@@ -97,7 +100,7 @@ void main() {
   // The picture ends sharply: the edge is only anti-aliased, over about a device pixel and a half, whatever the size
   // (a fade relative to the picture was visible as a gradient several pixels wide).
   vec2 edgePx = edge * uOut;
-  float corner = clamp(min(edgePx.x, edgePx.y) / 1.5, 0.0, 1.0);
+  float corner = clamp(min(edgePx.x, edgePx.y) / max(uEdge, 0.001), 0.0, 1.0);
   o = vec4(col * corner, 1.0);
 }`;
 
@@ -106,7 +109,7 @@ export class Display {
   constructor(canvas) {
     this.canvas = canvas;
     this.aspect = 'lisa';
-    this.fx = { ...PRESETS.soft }; // border: the black margin around the screen, as a fraction of the height (0..0.25)
+    this.fx = { ...PRESETS.soft, edge: EDGES.B }; // border: the black margin around the screen, as a fraction of the height (0..0.25)
     this.paper = [0.93, 0.945, 0.9];
     this.ink = [0.02, 0.022, 0.02];
     this.frame = null; // last {bits, width, height}
@@ -133,7 +136,7 @@ export class Display {
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
     gl.useProgram(p);
     this.prog = p;
-    this.u = Object.fromEntries(['uTex', 'uTexSize', 'uOut', 'uCurve', 'uScan', 'uGlow', 'uMask', 'uVig', 'uBorder', 'uPaper', 'uInk']
+    this.u = Object.fromEntries(['uTex', 'uTexSize', 'uOut', 'uCurve', 'uScan', 'uGlow', 'uMask', 'uVig', 'uBorder', 'uEdge', 'uPaper', 'uInk']
       .map((n) => [n, gl.getUniformLocation(p, n)]));
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -157,6 +160,8 @@ export class Display {
     const ratio = typeof this.aspect === 'number' ? this.aspect : ASPECTS[this.aspect].ratio;
     this.canvas.parentElement?.style.setProperty('--aspect', ratio);
   }
+  /** Softness of the picture's edge in device pixels (0 = hard). */
+  get edgeSoft() { const e = +this.fx.edge; return Math.max(0.001, Math.min(EDGES.max, Number.isFinite(e) ? e : EDGES.B)); }
   get border() { return Math.min(0.25, Math.max(0, this.fx.border || 0)); } // fraction of the canvas on each side
   setEffects(fx) {
     Object.assign(this.fx, fx);
@@ -197,6 +202,7 @@ export class Display {
     gl.uniform1f(this.u.uMask, this.fx.mask);
     gl.uniform1f(this.u.uVig, this.fx.vignette);
     gl.uniform1f(this.u.uBorder, this.border);
+    gl.uniform1f(this.u.uEdge, this.edgeSoft);
     gl.uniform3fv(this.u.uPaper, this.paper);
     gl.uniform3fv(this.u.uInk, this.ink);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

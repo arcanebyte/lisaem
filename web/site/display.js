@@ -94,7 +94,10 @@ void main() {
 
   vec2 c = p * 2.0 - 1.0;
   col *= 1.0 - uVig * 0.5 * dot(c, c);
-  float corner = smoothstep(0.0, 0.012 + uCurve * 0.1, min(edge.x, edge.y));
+  // The picture ends sharply: the edge is only anti-aliased, over about a device pixel and a half, whatever the size
+  // (a fade relative to the picture was visible as a gradient several pixels wide).
+  vec2 edgePx = edge * uOut;
+  float corner = clamp(min(edgePx.x, edgePx.y) / 1.5, 0.0, 1.0);
   o = vec4(col * corner, 1.0);
 }`;
 

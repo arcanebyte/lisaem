@@ -1189,7 +1189,9 @@ t_ipc_table *cpu68k_makeipclist(uint32 pc)
       EXITR(14, NULL, "odd pc!");
 #endif
 
-    ipc = &(table->ipc[((pc >> 1) & 0xff)]);
+    // 'table' is not assigned until below, so use the table we just got.  Reading the uninitialized
+    // 'table' here was undefined behaviour that optimizing compilers (clang -O1/-O2) exploit.
+    ipc = &(mmu_trn->table->ipc[((pc >> 1) & 0xff)]);
     DEBUG_LOG(200, "ipc is now %p at pc %08lx max %08lx", ipc, (long)pc, (long)xpc);
     if (!ipc)
     {

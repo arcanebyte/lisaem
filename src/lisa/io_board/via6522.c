@@ -133,6 +133,17 @@
 #define IN_VIA6522_C
 #include <vars.h>
 
+// Embedded/web hosts that render the speaker themselves define LISA_HOST_AUDIO and are told whenever any
+// register that shapes the sound changes (timer 2, the shift register, ACR, and the volume bits of port B),
+// so they can reconstruct the signal with exact timing. Without the define this compiles to nothing.
+#ifdef LISA_HOST_AUDIO
+extern void host_audio_changed(void);
+#define HOST_AUDIO_CHANGED() host_audio_changed()
+#else
+#define HOST_AUDIO_CHANGED() ((void)0)
+#endif
+
+
 extern void set_next_timer_id(uint8 x);
 
 #define VIA_SET_CB2(x)                      \
@@ -1261,6 +1272,7 @@ void via1_orb(uint8 data)
     if ((via[1].via[DDRB] & 0x0e))
     {
         volume = ((volume << 1) & (0x0e ^ (via[1].via[DDRB] & 0x0e))) | (data & via[1].via[DDRB] & 0x0e) >> 1;
+        HOST_AUDIO_CHANGED(); // volume is part of the sound, and used to be invisible to the host
         return;
     }
 
@@ -1295,6 +1307,7 @@ void via1_orb(uint8 data)
 
 void chk_sound_play(void)
 {
+    HOST_AUDIO_CHANGED();
     if (via[1].via[SHIFTREG] != 0 && via[1].via[T2LL] != 0 && ((via[1].via[ACR] & 0x10) == 0x10))
     {
         sound_play(via[1].via[T2LH] << 8 | (via[1].via[T2LL])); // enable sound, smaller the higher the pitch.

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="LisaEm">
+  <meta name="description" content="An Apple Lisa emulator that runs in the browser, on desktop and phones.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <title>LisaEm Web</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>LisaEm <em>Web</em></h1></div>
+    <div class="status" role="status" aria-live="polite">
+      <button id="btnPanel" class="ghost" aria-expanded="true" aria-controls="panel">Controls</button>
+      <span class="chip" id="chipPower">Off</span>
+      <span class="chip opt" id="chipTime">0.0 s</span>
+      <span class="chip opt" id="chipOS">—</span>
+      <button id="btnFull" class="ghost icon" hidden title="Full screen" aria-label="Full screen">⛶</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="stage" aria-label="Apple Lisa display">
+      <div class="screen" id="screenWrap">
+        <canvas id="screen" width="720" height="500" tabindex="0" aria-label="Lisa screen. Click to capture the keyboard."></canvas>
+        <div class="hint" id="hint"><span class="only-fine">Drop a disk image here, or choose one in Controls</span><span class="only-coarse">Tap <b>Controls</b>, choose a disk image, then Power on</span></div>
+      </div>
+      <div class="keybar" id="keybar" role="toolbar" aria-label="Lisa keys">
+        <button id="kbToggle" class="kb wide" aria-pressed="false" title="Show the on-screen keyboard">⌨ Keyboard</button>
+        <button class="kb mod" data-mod="command" aria-pressed="false" title="Apple key (hold for the next key)">⌘ Apple</button>
+        <button class="kb mod" data-mod="option" aria-pressed="false" title="Option key (hold for the next key)">⌥ Option</button>
+        <button class="kb mod" data-mod="shift" aria-pressed="false" title="Shift (hold for the next key)">⇧ Shift</button>
+        <button class="kb" data-key="clear" title="Clear (the Escape key)">Clear</button>
+        <button class="kb" data-key="return">Return</button>
+        <button class="kb" data-key="enter">Enter</button>
+        <button class="kb" data-key="tab">Tab</button>
+        <button class="kb" data-key="backspace" aria-label="Backspace">⌫</button>
+        <button class="kb" data-key="left" aria-label="Left">←</button>
+        <button class="kb" data-key="up" aria-label="Up">↑</button>
+        <button class="kb" data-key="down" aria-label="Down">↓</button>
+        <button class="kb" data-key="right" aria-label="Right">→</button>
+      </div>
+      <textarea id="kbInput" class="kbinput" rows="1" aria-label="Typing on the Lisa keyboard" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="enter"></textarea>
+      <p class="kbhelp only-fine" id="kbhelp">Click the screen to type. <kbd>Ctrl</kbd>/<kbd>⌘</kbd> = Apple key, <kbd>Alt</kbd> = Option, <kbd>Esc</kbd> = Clear.</p>
+      <p class="kbhelp only-coarse">Tap the screen to click, drag to drag. Double-tap to double-click.</p>
+    </section>
+
+    <aside class="panel" id="panel">
+
+      <details class="card" data-card="power" open>
+        <summary>Power <span class="meta" id="saveState"></span></summary>
+        <div class="card-body">
+          <div class="row power-row">
+            <button class="primary big" id="btnPower" disabled>Power on</button>
+            <label class="bootfrom">Boot from
+              <select id="bootFrom" disabled aria-describedby="bootHint"></select>
+            </label>
+          </div>
+          <p class="note" id="bootHint">Add a floppy or a hard disk to begin.</p>
+          <div class="row">
+            <button id="btnPause" disabled>Pause</button>
+            <button id="btnShot" disabled>Screenshot</button>
+            <button id="btnSaveState" disabled title="Save the whole machine, to resume later">Save state</button>
+            <button id="btnLoadState" title="Resume the saved machine">Load state</button>
+          </div>
+          <div class="row">
+            <label class="inline">Speed
+              <select id="speed">
+                <option value="0.25">¼×</option><option value="0.5">½×</option>
+                <option value="1" selected>1×</option><option value="2">2×</option>
+                <option value="4">4×</option><option value="8">8×</option>
+              </select>
+            </label>
+            <label class="inline"><input type="checkbox" id="sound" autocomplete="off" checked> Sound</label>
+          </div>
+        </div>
+      </details>
+
+      <details class="card" data-card="disks" open>
+        <summary>Disks</summary>
+        <div class="card-body">
+          <div class="slot" id="slotFloppy">
+            <span class="slot-label">Floppy</span>
+            <span class="slot-info"><span class="slot-name empty" id="floppyName">empty</span><small class="slot-size" id="floppySize"></small></span>
+            <button id="btnFloppy">Choose…</button>
+            <button id="btnEjectFloppy" class="icon" title="Eject" aria-label="Eject floppy" disabled>⏏</button>
+            <input type="file" id="fileFloppy" hidden>
+          </div>
+          <div class="slot" id="slotProfile">
+            <span class="slot-label">Hard disk</span>
+            <span class="slot-info"><span class="slot-name empty" id="profileName">empty</span><small class="slot-size" id="profileSize"></small></span>
+            <button id="btnProfile">Choose…</button>
+            <button id="btnEjectProfile" class="icon" title="Remove" aria-label="Remove hard disk" disabled>⏏</button>
+            <input type="file" id="fileProfile" hidden>
+          </div>
+          <div class="row" id="localRow" hidden>
+            <select id="localDisks" aria-label="Disk images in the media folder"></select>
+            <button id="btnInsertLocal" title="Put it in the floppy slot, or the hard disk slot if it is big enough to be a ProFile">Insert</button>
+          </div>
+          <p class="note"><span class="only-fine">Drop a disk image anywhere on the screen to load it and power on. </span>Disk images stay in this browser; nothing is uploaded.</p>
+
+          <details class="sub" data-card="changes">
+            <summary>Changes the Lisa makes to disks</summary>
+            <label class="inline"><input type="checkbox" id="keepChanges" checked> Keep them in this browser</label>
+            <div class="row">
+              <button id="btnDlFloppy" disabled>Download floppy</button>
+              <button id="btnDlProfile" disabled>Download hard disk</button>
+              <button id="btnRevert" disabled>Revert disks</button>
+            </div>
+            <p class="note">Saved changes are used the next time you load the same disk. Revert discards them.</p>
+          </details>
+        </div>
+      </details>
+
+      <details class="card" data-card="rom" open>
+        <summary>Boot ROM <span class="meta" id="romState">none</span></summary>
+        <div class="card-body">
+          <div class="slot" id="slotRom">
+            <span class="slot-label">ROM</span>
+            <span class="slot-info"><span class="slot-name empty" id="romName">none</span><small class="slot-size" id="romSize"></small></span>
+            <button id="btnRom">Choose…</button>
+            <button id="btnForgetRom" class="icon" title="Forget this ROM" aria-label="Forget ROM" disabled>✕</button>
+            <input type="file" id="fileRom" multiple hidden>
+          </div>
+          <div id="romDefault" hidden>
+            <div class="row">
+              <select id="romChoice" aria-label="Boot ROM to download"></select>
+              <button id="btnFetchRom">Download</button>
+            </div>
+            <p class="note" id="romNote"></p>
+            <label class="inline"><input type="checkbox" id="autoRom" checked> Download the default ROM automatically when none is loaded</label>
+          </div>
+          <div class="row"><button id="btnFolderRom" hidden>Use ROM from folder</button></div>
+          <p class="note">Optional: with no ROM, disks boot directly. <span id="romFrom" hidden>Downloads come from <span id="romHost">bitsavers</span> through this page's own server. Or </span>Choose your own: a 16 KB file, or a .lo and a .hi pair. A ROM stays in this browser only.</p>
+        </div>
+      </details>
+
+      <details class="card" data-card="display">
+        <summary>Display <span class="meta" id="renderer"></span></summary>
+        <div class="card-body">
+          <div class="row">
+            <label class="inline">Aspect <select id="aspect"></select></label>
+            <label class="inline">Effect
+              <select id="fxPreset">
+                <option value="clean">Clean</option><option value="soft">Soft CRT</option>
+                <option value="crt">Strong CRT</option><option value="custom">Custom</option>
+              </select>
+            </label>
+          </div>
+          <label class="slider">Edge <input type="range" id="fxEdge" min="0" max="6" step="0.05" list="edgeStops" aria-label="How sharp the picture's edge is" aria-describedby="edgeName"></label>
+          <datalist id="edgeStops"><option value="0" label="A"></option><option value="1.5" label="B"></option><option value="4" label="C"></option></datalist>
+          <p class="note edgenote" id="edgeName"></p>
+          <label class="slider">Border <input type="range" id="fxBorder" min="0" max="0.15" step="0.005" aria-label="Size of the black border around the screen"></label>
+          <details class="sub tune" data-card="tune">
+            <summary>Tune</summary>
+            <label class="slider">Curvature <input type="range" id="fxCurve" min="0" max="0.2" step="0.005"></label>
+            <label class="slider">Scanlines <input type="range" id="fxScan" min="0" max="1" step="0.05"></label>
+            <label class="slider">Glow <input type="range" id="fxGlow" min="0" max="1" step="0.05"></label>
+            <label class="slider">Mask <input type="range" id="fxMask" min="0" max="1" step="0.05"></label>
+            <label class="slider">Vignette <input type="range" id="fxVig" min="0" max="1" step="0.05"></label>
+          </details>
+        </div>
+      </details>
+
+      <details class="card" data-card="keyboard">
+        <summary>Keyboard</summary>
+        <div class="card-body">
+          <textarea id="pasteText" rows="3" placeholder="Text to type on the Lisa keyboard (Enter = Return)"></textarea>
+          <div class="row"><button id="btnType" disabled>Type it</button></div>
+        </div>
+      </details>
+
+      <details class="card" data-card="log" open>
+        <summary>Log</summary>
+        <div class="card-body"><pre class="log" id="log" aria-live="polite"></pre></div>
+      </details>
+
+      <details class="card" data-card="script">
+        <summary>Scripting</summary>
+        <div class="card-body">
+          <p class="note">The page exposes <code>window.lisaAuto</code>. In the browser console:</p>
+          <pre class="code" id="snippet">await lisaAuto.boot('/media/disk.dc42');
+lisaAuto.pause();                    // stop real-time running
+lisaAuto.type('hello\n');
+await lisaAuto.click(600, 216);      // Lisa pixels
+await lisaAuto.run(2000);            // 2 s of Lisa time
+lisaAuto.screenshot();               // PNG data URL
+lisaAuto.ascii();                    // the screen as text</pre>
+        </div>
+      </details>
+
+    </aside>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -841,8 +841,16 @@ void init_clock(void)
   uint8 dd_hun, dd_ten, dd_one;
   uint16 yday;
 
+#ifdef LISA_HOST_CLOCK
+  // Embedded/web hosts supply the time of day (a fixed value makes runs reproducible) and the Lisa
+  // clock is set in UTC, so the result does not depend on the host's timezone.
+  extern time_t lisa_host_time(void);
+  clktime = lisa_host_time();
+  timev = (struct tm *)gmtime(&clktime);
+#else
   clktime = time(&clktime);
   timev = (struct tm *)localtime(&clktime);
+#endif
 
   yday = timev->tm_yday + 1; // COPS counts days of the year from 1, tm_yday from 0
   dd_hun = (uint8)(yday / 100);

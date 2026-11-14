@@ -1259,7 +1259,7 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
       scc_w[port].s.wr0.r.cmd = 0; // clear command for next cycle (except for previous highpoint)
       break;
     case 5:
-      DEBUG_LOG(0, "WR0:Reset Tx Int Pending");
+      // DEBUG_LOG(0, "WR0:Reset Tx Int Pending");
       scc_tx_ip[port] = 0;
       scc_w[port].s.wr0.r.cmd = 0; // clear command for next cycle (except for previous highpoint)
       break;
@@ -1841,7 +1841,7 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
           v = (v & ~0x70) | (b3 << 4) | (b2 << 5) | (b1 << 6);
         else
           v = (v & ~0x0e) | (b1 << 1) | (b2 << 2) | (b3 << 3);
-        DEBUG_LOG(0, "RR2B: status %d, returning %02x", st, v);
+        // DEBUG_LOG(0, "RR2B: status %d, returning %02x", st, v);
         return v;
       }
 

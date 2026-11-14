@@ -101,7 +101,7 @@ static int fdm[NUMSERPORTS], // file descriptor master
     mypid = 0,               // child's pid
     parentpid = 0;           // parent pid
 
-static char input[NUMSERPORTS][150]; // data buffer
+static unsigned char input[NUMSERPORTS][150]; // data buffer
 
 pid_t child_pid[NUMSERPORTS]; // pid of children
 
@@ -370,7 +370,8 @@ int poll_shell_serial_read(int port)
   return rc; // return (FD_ISSET(0, &fd_in));
 }
 
-char read_serial_port_shell(int port)
+// Invoked from z8530.c. Returns 0..255 or -1 (no data available).
+int read_serial_port_shell(int port)
 {
   int rc = 0;
 

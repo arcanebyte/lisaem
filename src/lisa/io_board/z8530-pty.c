@@ -272,13 +272,13 @@ int poll_pty_serial_read(int port)
   return FD_ISSET(fd[port], &fd_in);
 }
 
-// Invoked from z8530.c
-char read_serial_port_pty(int port)
+// Invoked from z8530.c. Returns 0..255 or -1 (no data available).
+int read_serial_port_pty(int port)
 {
   // Without this poll() check, the read() call below can block if no data is available, which would freeze LisaEm.
   if (poll_pty_serial_read(port) > 0)
   {
-    char data;
+    unsigned char data;
     int num_bytes_read = read(fd[port], &data, 1);
     if (num_bytes_read == 1)
     {

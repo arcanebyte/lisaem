@@ -115,12 +115,6 @@ char telnethax[] = {0xff, 0xfb, 0x01, 0xff, 0xfb, 0x03, 0xff, 0xfd, 0x0f3};
 
 int poll_telnet_serial_read(int portnum);
 
-char read_serial_port_telnetd(unsigned int port)
-{
-  int c = poll_telnet_serial_read(port);
-  return (c > -1) ? (char)c : 0;
-}
-
 void write_serial_port_telnetd(unsigned int port, char c)
 {
   char buffer[2];

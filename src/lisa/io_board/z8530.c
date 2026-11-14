@@ -103,8 +103,10 @@ int irq_on_next_rx_char[2];
 
 #define IMSK (reg68k_sr.sr_struct.i0 | (reg68k_sr.sr_struct.i1 << 1) | (reg68k_sr.sr_struct.i2 << 2))
 
-// We throttle receiving data on port B (port 0) in attempt to work around a forever bug in the SCC code,
-// where the Lisa software (e.g. a Terminal app) often hangs when receiving a large amount of data from the host.
+// The throttling below was needed to work around a bug in the SCC code,
+// where the Lisa software (e.g. a Terminal app) often hung when receiving a large amount of data from the host.
+// The bug has been fixed, and throttling is no longer needed. It is left, for now, until more testing is done.
+// It was set to 10000000 cpu cycles, now it's set to just 100.
 // The throttling has two steps for each byte received on port B:
 // 1) we wait for the Lisa to "consume" each received byte on port B, and
 // 2) once the Lisa has consumed a byte, we also wait SCC_MIN_CYCLES_BETWEEN_READS number of clocks before reading the next byte from the sender.
@@ -112,8 +114,8 @@ int irq_on_next_rx_char[2];
 static uint8 waiting_for_lisa_to_read_port_b = 0;        // Set to 1 when we have received a byte on port B and are waiting for the Lisa to read it. Cleared when the Lisa reads the byte.
 static XTIMER port_b_last_lisa_read_clock_timestamp = 0; // The cpu68k_clocks at the time when Lisa consumed a byte.
 // Longer delays improve the reliability of receiving data, but make the transfer slower.  
-// 1000000 seems to be a good compromise.  It equals to just 5 bytes transferred per second at 5MHz, but who runs LisaEm at that speed?
-#define SCC_MIN_CYCLES_BETWEEN_READS 1000000
+// 5MHz/100 = throttle speed of at-most 50k bytes being read per second.
+#define SCC_MIN_CYCLES_BETWEEN_READS 100
 
 int total_scc_received_chars = 0; // Total number of characters received from the SCC ports since the emulator started.
 
@@ -125,92 +127,41 @@ int total_scc_received_chars = 0; // Total number of characters received from th
 #define RR3_IP_A_TX 0x10
 #define RR3_IP_A_RX 0x20
 
-// 128 is an unused bit, it's used to signify that an IRQ has occured since the result
-// is zero.
+// ---------------------------------------------------------------------------
+// Pending interrupts: one state per SOURCE and port (0 = B, 1 = A), as on
+// the real Z8530.
+//
+//  * transmit (scc_tx_ip): latched.  Writing a data byte clears it and
+//    marks the port busy; when the byte has gone (z8530_tx_done, after
+//    Z8530_XMIT_DELAY cycles) it is set -- "transmit buffer empty".  WR0
+//    command 5 (Reset Tx Int Pending) clears it.
+//  * external/status (scc_ext_ip): latched.  Set by a WR14 write (baud
+//    rate generator); WR0 command 2 (Reset Ext/Status Interrupts) clears it.
+//  * receive: not stored -- pending whenever received bytes are waiting
+//    (scc_rx_ip), so it cannot be lost and comes back by itself.
+//
+// A source interrupts only while its enable bit in its port's WR1 is on
+// (and WR9 MIE).  The Lisa OS driver sets WR1 to 0 to keep its own port's
+// interrupts out of its critical sections, and relies on that.  A source
+// that is pending while disabled stays pending and interrupts once it is
+// enabled again.  WR0 command 7 (Reset Highest IUS) does not clear pending
+// sources, as on the real chip.  RR3 and the RR2 status are computed from
+// these states.
+// ---------------------------------------------------------------------------
+static uint8 scc_tx_ip[2];   // transmit buffer empty, latched
+static uint8 scc_tx_busy[2]; // a byte was written; scc_tx_ip follows at z8530_tx_done
+static uint8 scc_ext_ip[2];  // external/status, latched
 
-#define TX_BUFF_EMPTY(port)                                   \
-  {                                                           \
-    if (scc_w[port].s.wr1.r.txintenable)                      \
-    {                                                         \
-      if (port)                                               \
-      {                                                       \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38) | RR3_IP_B_TX; \
-        z8530_last_irq_status_bits = 8;                       \
-      }                                                       \
-      else                                                    \
-      {                                                       \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07) | RR3_IP_A_TX; \
-        z8530_last_irq_status_bits = 128;                     \
-      }                                                       \
-    }                                                         \
+// The old event macros, kept for their callers: transmit and ext/status
+// set their latch.  Receive needs no macro: its pending state is computed
+// from the receive buffer (scc_rx_ip).
+#define TX_BUFF_EMPTY(port) \
+  {                         \
+    scc_tx_ip[(port)] = 1;  \
   }
-
-#define EXT_STATUS_CHANGE(port)                                 \
-  {                                                             \
-    if (scc_w[port].s.wr1.r.extintenable)                       \
-    {                                                           \
-      if (port)                                                 \
-      {                                                         \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38) | RR3_IP_B_STAT; \
-        z8530_last_irq_status_bits = 10;                        \
-      }                                                         \
-      else                                                      \
-      {                                                         \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07) | RR3_IP_A_STAT; \
-        z8530_last_irq_status_bits = 2;                         \
-      }                                                         \
-    }                                                           \
-  }
-
-#define RX_CHAR_AVAILABLE(port)                                              \
-  {                                                                          \
-    if (scc_w[port].s.wr1.r.rxintmode && scc_w[port].s.wr1.r.rxintmode != 3) \
-    {                                                                        \
-      if (port)                                                              \
-      {                                                                      \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38) | RR3_IP_B_RX;                \
-        z8530_last_irq_status_bits = 12;                                     \
-      }                                                                      \
-      else                                                                   \
-      {                                                                      \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07) | RR3_IP_A_RX;                \
-        z8530_last_irq_status_bits = 4;                                      \
-      }                                                                      \
-    }                                                                        \
-  }
-
-#define RX_CHAR_NOT_AVAILABLE(port)                                          \
-  {                                                                          \
-    if (scc_w[port].s.wr1.r.rxintmode && scc_w[port].s.wr1.r.rxintmode != 3) \
-    {                                                                        \
-      if (port)                                                              \
-      {                                                                      \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x38);                              \
-        z8530_last_irq_status_bits = 12;                                     \
-      }                                                                      \
-      else                                                                   \
-      {                                                                      \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x07);                              \
-        z8530_last_irq_status_bits = 4;                                      \
-      }                                                                      \
-    }                                                                        \
-  }
-
-#define SPECIAL_RECV_COND(port)                                 \
-  {                                                             \
-    if (scc_w[port].s.wr1.r.rxintmode == 3)                     \
-    {                                                           \
-      if (port)                                                 \
-      {                                                         \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0xf0) | RR3_IP_B_STAT; \
-        z8530_last_irq_status_bits = 14;                        \
-      }                                                         \
-      else                                                      \
-      {                                                         \
-        scc_r[1].r[3] = (scc_r[1].r[3] & 0x0f) | RR3_IP_A_STAT; \
-        z8530_last_irq_status_bits = 6;                         \
-      }                                                         \
-    }                                                           \
+#define EXT_STATUS_CHANGE(port) \
+  {                             \
+    scc_ext_ip[(port)] = 1;     \
   }
 
 // wrapper around fliflo_buff_has_data when software handshaking is enabled
@@ -234,7 +185,6 @@ void set_odd_parity(unsigned int port);
 void set_no_parity(unsigned int port);
 void set_bits_per_char(unsigned int port, uint8 bitsperchar);
 void set_stop_bits(unsigned int port, uint8 stopbits);
-char read_serial_port(unsigned int port);
 void write_serial_port(unsigned int port, char data);
 void scc_hardware_reset_port(unsigned int port);
 void scc_channel_reset_port(unsigned int port);
@@ -242,12 +192,6 @@ void initialize_scc(int actual);
 void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data);
 uint8 lisa_rb_Oxd200_sccz8530(uint32 address);
 void dump_scc(void);
-
-// char read_serial_port(unsigned int port); //(jamesdenton) This was declared twice (first in ~214)
-char read_serial_port_nothing(unsigned int port);
-char read_serial_port_imagewriter(unsigned int port);
-char read_serial_port_loopbackplug(unsigned int port);
-char read_serial_port_localport(unsigned int port);
 
 void write_serial_port_nothing(unsigned int port, char data);
 void write_serial_port_loopbackplug(unsigned int port, char data);
@@ -258,7 +202,6 @@ uint32 get_baud_rate(unsigned int port);
 void set_baud_rate(int port, uint32 baud);
 
 // TelnetD works on every platform (Winsock on Windows).
-extern char read_serial_port_telnetd(unsigned int port);
 extern void write_serial_port_telnetd(unsigned int port, char c);
 extern int poll_telnet_serial_read(int portnum);
 extern void check_telnet_connection(int portnum);
@@ -266,28 +209,27 @@ extern void check_telnet_connection(int portnum);
 //::TODO:: find a way to implement a windows version of pty/tty
 #ifndef __MSVCRT__
 
-extern char read_serial_port_shell(unsigned int port);
+extern int read_serial_port_shell(unsigned int port);
 extern void write_serial_port_shell(unsigned int port, char c);
 
-extern char read_serial_port_pty(unsigned int port);
+extern int read_serial_port_pty(unsigned int port);
 extern void write_serial_port_pty(unsigned int port, char c);
 extern void set_dtr_pty(unsigned int port, uint8 value);
 
-extern char read_serial_port_tty(unsigned int port);
+extern int read_serial_port_tty(unsigned int port);
 extern void write_serial_port_tty(unsigned int port, char c);
 extern void set_port_baud_tty(int port, uint32 baud);
 
 
 #else
 // temp disable for windows until we flesh these guys out
-char read_serial_port_shell(unsigned int port) { return 0; }
-char read_serial_port_pty(unsigned int port) { return 0; }
-extern char read_serial_port_tty(unsigned int port);
+int read_serial_port_shell(unsigned int port) { return 0; }
+int read_serial_port_pty(unsigned int port) { return 0; }
+extern int read_serial_port_tty(unsigned int port);
 #endif
 
 // void write_serial_port_terminal(int port, uint8 data); //(jamesdenton) type mismatch between uint8 and char; need to address this
 void write_serial_port_terminal(unsigned int port, char data);
-char read_serial_port_terminal(unsigned int port);
 
 static inline void on_read_irq_handle(int port);
 
@@ -359,9 +301,9 @@ void scc_hardware_reset_port(unsigned int port)
   register uint8 d;
 
   d = scc_r[port].r[0];
-  scc_r[port].r[0] = (d & (8 | 16 | 32 | 128) | 64 | 4);
+  scc_r[port].r[0] = ((d & (8 | 16 | 32 | 128)) | 64 | 4);
   d = scc_r[port].r[1];
-  scc_r[port].r[1] = (d & 1 | 2 | 4);
+  scc_r[port].r[1] = ((d & 1) | 2 | 4);
   d = scc_r[port].r[10];
   scc_r[port].r[10] = d & 64;
 
@@ -390,12 +332,15 @@ void scc_hardware_reset_port(unsigned int port)
   d = scc_w[port].w[17];
   scc_w[port].w[17] = 32;
   d = scc_w[port].w[9];
-  scc_w[port].w[9] = (d & 3 | 128 | 64);
+  scc_w[port].w[9] = ((d & 3) | 128 | 64);
 
   d = scc_w[port].w[14];
-  scc_w[port].w[14] = (d & (128 | 64) | (32 | 16));
+  scc_w[port].w[14] = ((d & (128 | 64)) | (32 | 16));
 
   irq_on_next_rx_char[port] = 0;
+  scc_tx_ip[port] = 0; // no pending interrupts after a reset
+  scc_tx_busy[port] = 0;
+  scc_ext_ip[port] = 0;
 
   scc_bits_per_char_mask[0] = 255;
   scc_bits_per_char_mask[1] = 255;
@@ -406,9 +351,9 @@ void scc_channel_reset_port(unsigned int port)
   register uint8 d;
 
   d = scc_r[port].r[0];
-  scc_r[port].r[0] = (d & (8 | 16 | 32 | 128) | 64 | 4);
+  scc_r[port].r[0] = ((d & (8 | 16 | 32 | 128)) | 64 | 4);
   d = scc_r[port].r[1];
-  scc_r[port].r[1] = (d & 1 | 2 | 4);
+  scc_r[port].r[1] = ((d & 1) | 2 | 4);
   d = scc_r[port].r[10];
   scc_r[port].r[10] = d & 64;
 
@@ -441,16 +386,18 @@ void scc_channel_reset_port(unsigned int port)
   scc_w[port].w[11] = 16;
 
   d = scc_w[port].w[14];
-  scc_w[port].w[14] = (d & (128 | 64) | (32 | 16));
+  scc_w[port].w[14] = ((d & (128 | 64)) | (32 | 16));
   d = scc_w[port].w[15];
   scc_w[port].w[15] = 255 - 7;
 
   irq_on_next_rx_char[port] = 0;
+  scc_tx_ip[port] = 0; // no pending interrupts after a reset
+  scc_tx_busy[port] = 0;
+  scc_ext_ip[port] = 0;
   scc_bits_per_char_mask[0] = 255;
   scc_bits_per_char_mask[1] = 255;
 }
 
-extern char read_serial_port_terminal(unsigned int port);
 // extern void write_serial_port_terminal(int port, uint8 data); //(jamesdenton) type mismatch between uint8 and char; need to address this
 extern void write_serial_port_terminal(unsigned int port, char data);
 
@@ -460,7 +407,9 @@ void read_port_if_ready_nothing(unsigned int port)
   return;
 }
 
-void rx_char_available(int port) { RX_CHAR_AVAILABLE(port); }
+// called by the wx terminal; nothing to do: receive pending is computed
+// from the receive buffer (scc_rx_ip)
+void rx_char_available(int port) { (void)port; }
 
 void read_port_if_ready_shell(unsigned int port)
 {
@@ -470,8 +419,8 @@ void read_port_if_ready_shell(unsigned int port)
     return;
   if (port == 0 && (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp < SCC_MIN_CYCLES_BETWEEN_READS))
     return;
-  char data = read_serial_port_shell(port);
-  if (data != -1)
+  int data = read_serial_port_shell(port);
+  if (data >= 0)
   {
     if (port == 0)
     {
@@ -480,7 +429,6 @@ void read_port_if_ready_shell(unsigned int port)
     // ALERT_LOG(0,"---vvv---------------------------------------------------------------------------------------------------------------");
     // fliflo_dump(stderr,&SCC_READ[0],"BEFORE get from queue");
     fliflo_buff_add(&SCC_READ[port], (uint8)(data)&scc_bits_per_char_mask[port]);
-    RX_CHAR_AVAILABLE(port);
     DEBUG_LOG(0, "Received 0x%02x (%d) %c from scc port:%d (mask:%02x) serial_b fliflo size is:%d",
               (uint8)(data), data,
               ((data > 31) ? ((uint8)(data)) : '.'),
@@ -499,8 +447,8 @@ void read_port_if_ready_pty(unsigned int port)
     return;
   if (port == 0 && (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp < SCC_MIN_CYCLES_BETWEEN_READS))
     return;
-  char data = read_serial_port_pty(port);
-  if (data != -1)
+  int data = read_serial_port_pty(port);
+  if (data >= 0)
   {
     if (port == 0)
     {
@@ -527,8 +475,7 @@ void read_port_if_ready_terminal(unsigned int port)
     return;
   if (port == 0 && (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp < SCC_MIN_CYCLES_BETWEEN_READS))
     return;
-  if (fliflo_buff_has_data(&SCC_READ[port]))
-    RX_CHAR_AVAILABLE(port);
+  // data already in the buffer raises receive pending by itself (scc_rx_ip)
 }
 
 void read_port_if_ready_tty(unsigned int port)
@@ -539,15 +486,14 @@ void read_port_if_ready_tty(unsigned int port)
     return;
   if (port == 0 && (cpu68k_clocks - port_b_last_lisa_read_clock_timestamp < SCC_MIN_CYCLES_BETWEEN_READS))
     return;
-  char data = read_serial_port_tty(port);
-  if (data != -1)
+  int data = read_serial_port_tty(port);
+  if (data >= 0)
   {
     if (port == 0)
     {
       waiting_for_lisa_to_read_port_b = 1;
     }
     fliflo_buff_add(&SCC_READ[port], (uint8)(data)&scc_bits_per_char_mask[port]);
-    RX_CHAR_AVAILABLE(port);
     ALERT_LOG(0, "Received 0x%02x (%d) %c from scc port:%d (mask:%02x) serial_b fliflo size is:%d",
               (uint8)(data), data,
               ((data > 31) ? ((uint8)(data)) : '.'),
@@ -576,7 +522,6 @@ void read_port_if_ready_telnetd(unsigned int port)
       waiting_for_lisa_to_read_port_b = 1;
     }
     fliflo_buff_add(&SCC_READ[port], (uint8)(data)&scc_bits_per_char_mask[port]);
-    RX_CHAR_AVAILABLE(port);
     DEBUG_LOG(0, "Received %02x %c from scc port:%d (mask:%02x) serial fliflo size is:%d",
               (uint8)(data),
               ((data > 31) ? ((uint8)(data)) : '.'),
@@ -647,7 +592,6 @@ void initialize_scc(int actual)
     scc_fn[0].set_no_parity = set_no_parity;             //   void (*set_no_parity)(unsigned int port);
     scc_fn[0].set_bits_per_char = set_bits_per_char;     //   void (*set_bits_per_char)(unsigned int port, uint8 bitsperchar);
     scc_fn[0].set_stop_bits = set_stop_bits;             //   void (*set_stop_bits)(unsigned int port,uint8 stopbits);
-    scc_fn[0].read_serial_port = read_serial_port;       //   char (*read_serial_port)(unsigned int port);
     scc_fn[0].read_port_if_ready = read_port_if_ready_nothing;
     scc_fn[0].write_serial_port = write_serial_port;             //   void (*write_serial_port)(unsigned int port, char data);
     scc_fn[0].scc_hardware_reset_port = scc_hardware_reset_port; //   void (*scc_hardware_reset_port)(unsigned int port);
@@ -667,7 +611,6 @@ void initialize_scc(int actual)
     scc_fn[1].set_no_parity = set_no_parity;
     scc_fn[1].set_bits_per_char = set_bits_per_char;
     scc_fn[1].set_stop_bits = set_stop_bits;
-    scc_fn[1].read_serial_port = read_serial_port;
     scc_fn[1].read_port_if_ready = read_port_if_ready_nothing;
     scc_fn[1].write_serial_port = write_serial_port;
     scc_fn[1].scc_hardware_reset_port = scc_hardware_reset_port;
@@ -696,44 +639,36 @@ void initialize_scc(int actual)
     switch (portkind[port])
     {
     case SCC_LOCALPORT:
-      scc_fn[port].read_serial_port = read_serial_port_localport;
       scc_fn[port].write_serial_port = write_serial_port_localport;
       break;
     case SCC_IMAGEWRITER_PS:
     case SCC_IMAGEWRITER_PCL:
     case SCC_IMAGEWRITER:
-      scc_fn[port].read_serial_port = read_serial_port_imagewriter;
       scc_fn[port].write_serial_port = write_serial_port_imagewriter;
       break;
     case SCC_LOOPBACKPLUG:
-      scc_fn[port].read_serial_port = read_serial_port_loopbackplug;
       scc_fn[port].write_serial_port = write_serial_port_loopbackplug;
       scc_fn[port].set_dtr = set_dtr_loopbackplug;
       scc_fn[port].set_rts = set_rts_loopbackplug;
       break;
     case SCC_TELNETD:
-      scc_fn[port].read_serial_port = read_serial_port_telnetd;
       scc_fn[port].write_serial_port = write_serial_port_telnetd;
       scc_fn[port].read_port_if_ready = read_port_if_ready_telnetd;
       break;
 
 #ifndef __MSVCRT__
     case SCC_SHELL:
-      scc_fn[port].read_serial_port = read_serial_port_shell;
       scc_fn[port].write_serial_port = write_serial_port_shell;
       scc_fn[port].read_port_if_ready = read_port_if_ready_shell;
       break;
 
     case SCC_PTY:
-      // "read_serial_port" is never invoked. TO DO: clean up this unused code:
-      //scc_fn[port].read_serial_port = read_serial_port_pty;
       scc_fn[port].write_serial_port = write_serial_port_pty;
       scc_fn[port].read_port_if_ready = read_port_if_ready_pty;
       scc_fn[port].set_dtr = set_dtr_pty;
       break;
 
     case SCC_TTY:
-      scc_fn[port].read_serial_port = read_serial_port_tty;
       scc_fn[port].write_serial_port = write_serial_port_tty;
       scc_fn[port].read_port_if_ready = read_port_if_ready_tty;
       scc_fn[port].set_baud_rate = set_port_baud_tty;
@@ -743,14 +678,12 @@ void initialize_scc(int actual)
     // fallthrough to default for unsupported on windows
 #endif
     case SCC_TERMINAL:
-      scc_fn[port].read_serial_port = read_serial_port_terminal;
       scc_fn[port].write_serial_port = write_serial_port_terminal;
       scc_fn[port].read_port_if_ready = read_port_if_ready_terminal;
       break;
 
     default: // fallthrough, includes SCC_NOTHING.
       // ALERT_LOG(0,"Not sure what to connect to this port");
-      scc_fn[port].read_serial_port = read_serial_port_nothing;
       scc_fn[port].write_serial_port = write_serial_port_nothing;
       scc_fn[port].read_port_if_ready = read_port_if_ready_nothing;
       break;
@@ -1058,66 +991,72 @@ static inline void avoid_rom_scc_tests(void)
 // transmit interrupt (128) whatever the enables: a guest that sends with
 // transmit interrupts off never cleared it, and the CPU went round the
 // guest's SCC interrupt handler for good.
+// The transmit delay (z8530_event, set when a byte is written) has run
+// out: every port that was sending now has an empty transmit buffer.
 void z8530_tx_done(void)
 {
-  if (!scc_w[0].s.wr9.r.MIE)
-    return;
-  if (scc_w[0].s.wr1.r.txintenable)
-    TX_BUFF_EMPTY(0)
-  else if (scc_w[1].s.wr1.r.txintenable)
-    TX_BUFF_EMPTY(1)
+  for (int p = 0; p < 2; p++)
+    if (scc_tx_busy[p])
+    {
+      scc_tx_busy[p] = 0;
+      scc_tx_ip[p] = 1;
+    }
+}
+
+// Receive interrupt pending on port P: bytes are waiting, the receiver is
+// on, and receive interrupts are on (WR1 mode 1 or 2), or "interrupt on
+// next character" was requested (WR0 command 4).  Mode 3 (special
+// condition only) does not interrupt for ordinary characters.
+static int scc_rx_ip(int p)
+{
+  return HAS_DATA(p) && scc_w[p].s.wr3.r.rxenable &&
+         (irq_on_next_rx_char[p] || scc_w[p].s.wr1.r.rxintmode == 1 ||
+          scc_w[p].s.wr1.r.rxintmode == 2);
+}
+
+// RR3: the pending interrupts that are enabled, in the Zilog bit layout:
+// B ext 0x01, B tx 0x02, B rx 0x04, A ext 0x08, A tx 0x10, A rx 0x20.
+static uint8 scc_rr3(void)
+{
+  uint8 v = 0;
+  if (scc_ext_ip[0] && scc_w[0].s.wr1.r.extintenable) v |= 0x01;
+  if (scc_tx_ip[0] && scc_w[0].s.wr1.r.txintenable)   v |= 0x02;
+  if (scc_rx_ip(0))                                    v |= 0x04;
+  if (scc_ext_ip[1] && scc_w[1].s.wr1.r.extintenable) v |= 0x08;
+  if (scc_tx_ip[1] && scc_w[1].s.wr1.r.txintenable)   v |= 0x10;
+  if (scc_rx_ip(1))                                    v |= 0x20;
+  return v;
+}
+
+// The 3-bit interrupt status for the RR2 vector (V3 V2 V1), of the
+// highest-priority pending source -- channel A before B, and within a
+// channel receive, then transmit, then external/status:
+//   B tx 000, B ext 001, B rx 010, A tx 100, A ext 101, A rx 110.
+// With nothing pending the chip reports 011; this returns 000 (B transmit)
+// instead: the Lisa OS handler for that only finds nothing to do, and its
+// exit path still picks up a received byte.
+static int scc_rr2_status(void)
+{
+  uint8 v = scc_rr3();
+  if (v & 0x20) return 6; // A rx
+  if (v & 0x10) return 4; // A tx
+  if (v & 0x08) return 5; // A ext
+  if (v & 0x04) return 2; // B rx
+  if (v & 0x02) return 0; // B tx
+  if (v & 0x01) return 1; // B ext
+  return 0;
 }
 
 int get_scc_pending_irq(void)
 {
-  // int data;
-
   if (!scc_w[0].s.wr9.r.MIE)
   {
     DEBUG_LOG(0, "MIE is off");
     return 0;
   } // Master IRQ Enable bit - if not set, no IRQ's to return.
-  scc_fn[0].read_port_if_ready(0);
+  scc_fn[0].read_port_if_ready(0); // take in the next received byte, if any
   scc_fn[1].read_port_if_ready(1);
-
-  // if IRQ on next char is enabled and the fliflo has data, flag IRQ
-  if ((irq_on_next_rx_char[0] && HAS_DATA(0)) ||
-      ((scc_w[0].s.wr1.r.rxintmode) && HAS_DATA(0)))
-  {
-    DEBUG_LOG(0, "chb has data");
-    on_read_irq_handle(0);
-    scc_r[1].s.rr3.r.ch_b_ext_status_irq_pending = 1;
-    RX_CHAR_AVAILABLE(0);
-  }
-  else
-    scc_r[1].s.rr3.r.ch_b_ext_status_irq_pending = 0; // 20051111
-
-  if ((irq_on_next_rx_char[1] && HAS_DATA(1)) ||
-      ((scc_w[1].s.wr1.r.rxintmode) && HAS_DATA(1)))
-  {
-    DEBUG_LOG(0, "cha has data");
-    on_read_irq_handle(1);
-    scc_r[1].s.rr3.r.ch_a_ext_status_irq_pending = 1;
-    RX_CHAR_AVAILABLE(1);
-  }
-  else
-    scc_r[1].s.rr3.r.ch_a_ext_status_irq_pending = 0; // 20051111
-
-  // if there's no more data, don't trigger an IRQ for it.
-  if (!HAS_DATA(0) && z8530_last_irq_status_bits == 4)
-  {
-    z8530_last_irq_status_bits = 0;
-    scc_r[1].s.rr3.r.ch_b_rx_irq_pending = 0;
-  }
-  if (!HAS_DATA(1) && z8530_last_irq_status_bits == 64)
-  {
-    z8530_last_irq_status_bits = 0;
-    scc_r[1].s.rr3.r.ch_a_rx_irq_pending = 0;
-  }
-
-  DEBUG_LOG(0, "Returning: %d or %d", (scc_r[1].r[3]), z8530_last_irq_status_bits);
-
-  return (scc_r[1].r[3]) || z8530_last_irq_status_bits; // if zero, no irq, else irq
+  return scc_rr3() != 0;
 }
 
 void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
@@ -1185,12 +1124,6 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
 
   if (access) // Write to data port.
   {
-    if (scc_w[0].s.wr9.r.soft_int_ack)
-    {
-      scc_r[0].r[2] = 0;
-      z8530_last_irq_status_bits = 0;
-      scc_r[port].r[2] = 0;
-    }
     DEBUG_LOG(0, "SRC:SCC: access:%d port %d", access, port);
     if (!scc_w[port].s.wr5.r.txenable)
     {
@@ -1208,7 +1141,10 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
     }
     else // real writes - with option auto_echo
     {
-      TX_BUFF_EMPTY(port); // pretend infinite speed output, well at least don't tell the Lisa that output buffer is full.
+      // The byte is on its way: the transmit buffer is full until
+      // z8530_tx_done (Z8530_XMIT_DELAY cycles), which sets scc_tx_ip.
+      scc_tx_ip[port] = 0;
+      scc_tx_busy[port] = 1;
 
       if (z8530_event == -1)
         z8530_event = cpu68k_clocks + Z8530_XMIT_DELAY;
@@ -1218,14 +1154,11 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
       {
         ALERT_LOG(0, "XOFF ^S  received port %d (pause) \n", port);
         xoffflag[port] = 1;
-        TX_BUFF_EMPTY(port);
       }
       if (xonenabled[port] && data == 17)
       {
         ALERT_LOG(0, "XON  ^Q  received port %d (resume)\n", port);
-        xoffflag[port] = 0;
-        if (HAS_DATA(port))
-          RX_CHAR_AVAILABLE(port);
+        xoffflag[port] = 0; // HAS_DATA now true again: receive pending follows
       }
 
       if (scc_w[port].s.wr14.r.auto_echo)
@@ -1239,7 +1172,6 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
       {
         ALERT_LOG(0, "write to write_serial_port_method byte:0x%02x (%d) XON-enabled?:%d xoff:%d", data, data, xonenabled[port], xoffflag[port]);
         scc_fn[port].write_serial_port(port, data);
-        TX_BUFF_EMPTY(port);
 
 #ifdef DEBUG
         if (scc_fn[port].write_serial_port == write_serial_port_shell)
@@ -1254,7 +1186,6 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
       {
         ALERT_LOG(0, "write method is null, calling generic handler to write %02x", data);
         write_serial_port(port, data);
-        TX_BUFF_EMPTY(port);
       }
     }
 
@@ -1310,10 +1241,9 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
       break; // NULL Command
 
     case 2:
-      DEBUG_LOG(0, "WR0:CMD=2  Reset IRQ status flags %02x", data); // cmd=2
-      scc_r[0].s.rr2.v = 0;                                         // was data ??
-      // scc_w[0].s.wr2.v=data;
-      break; // reset irq status flags
+      DEBUG_LOG(0, "WR0:CMD=2  Reset Ext/Status Interrupts %02x", data); // cmd=2
+      scc_ext_ip[port] = 0;
+      break;
     case 3:
       DEBUG_LOG(0, "WR0:CMD=send sdlc abort");
       // send_sdlc_abort(port);                                   // send sdlc abort
@@ -1329,14 +1259,9 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
       scc_w[port].s.wr0.r.cmd = 0; // clear command for next cycle (except for previous highpoint)
       break;
     case 5:
-      DEBUG_LOG(0, "WR0:Clear next xmit pending irq");
-      scc_r[1].s.rr3.r.ch_a_tx_irq_pending = 0;
-      scc_r[1].s.rr3.r.ch_a_tx_irq_pending = 0;
+      // DEBUG_LOG(0, "WR0:Reset Tx Int Pending");
+      scc_tx_ip[port] = 0;
       scc_w[port].s.wr0.r.cmd = 0; // clear command for next cycle (except for previous highpoint)
-
-      // 2006.08.07
-      if ((port && z8530_last_irq_status_bits == 8) || (!port && z8530_last_irq_status_bits == 128))
-        z8530_last_irq_status_bits = 0;
       break;
     case 6:
       DEBUG_LOG(0, "WR0:Reset Error bits");
@@ -1350,10 +1275,9 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
 
     case 7:
 
-      DEBUG_LOG(0, "WR0:Reset highest irq under service"); // reset highest Interrupt Under Service ????
-      scc_r[1].r[3] = 0;                                   // z8530_find_highest_ius(scc_r[1].r[3], 1) & 63;         // the 2nd param tells  the fn to clear it
-      scc_r[0].r[2] = 0;
-      z8530_last_irq_status_bits = 0;
+      // Interrupts Under Service are not modelled, and on the real chip
+      // this command does not clear pending interrupts: nothing to do.
+      DEBUG_LOG(0, "WR0:Reset highest irq under service");
       scc_w[port].s.wr0.r.cmd = 0; // clear command for next cycle (except for previous highpoint)
       break;
     }
@@ -1589,18 +1513,12 @@ void lisa_wb_Oxd200_sccz8530(uint32 address, uint8 data)
     DEBUG_LOG(0, "zc_irq_en:%d", scc_w[port].s.wr15.r.zero_count_interrupt_enable);
     DEBUG_LOG(0, "scc_w[port].s.wr1.r.rxintmode:%d", scc_w[port].s.wr1.r.rxintmode);
 
-    if (scc_w[port].s.wr14.r.br_generator_enable && scc_w[port].s.wr1.r.extintenable &&
-        scc_w[port].s.wr15.r.zero_count_interrupt_enable)
-      on_special_irq_handle(port);
 
     DEBUG_LOG(0, "chb irq ext pending:%d", scc_r[1].s.rr3.r.ch_b_ext_status_irq_pending);
     DEBUG_LOG(0, "cha irq ext pending:%d", scc_r[1].s.rr3.r.ch_a_ext_status_irq_pending);
-    DEBUG_LOG(0, "cheat on");
-
-    if (!port)
-      scc_r[1].s.rr3.r.ch_b_ext_status_irq_pending = 1;
-    else
-      scc_r[1].s.rr3.r.ch_a_ext_status_irq_pending = 1;
+    // as before: a WR14 write raises an external/status interrupt (it is
+    // delivered only while WR1 enables ext/status interrupts)
+    EXT_STATUS_CHANGE(port);
 
     DEBUG_LOG(0, "dtr req: %d", scc_w[port].s.wr14.r.dtr_req_fn);
     DEBUG_LOG(0, "autoecho: %d", scc_w[port].s.wr14.r.auto_echo);
@@ -1688,14 +1606,6 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
   if (access) //--------------- Data Port ---------------------------------------------------------------------------------
   {
 
-    if (scc_w[0].s.wr9.r.soft_int_ack)
-    {
-      scc_r[0].r[2] = 0;
-      z8530_last_irq_status_bits = 0;
-    } // only one wr9
-
-    if ((!port && z8530_last_irq_status_bits == 12) || (port && z8530_last_irq_status_bits == 4))
-      z8530_last_irq_status_bits = 0; // 20060804
 
     if (!scc_w[port].s.wr3.r.rxenable)
     {
@@ -1713,6 +1623,7 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
 
         // This is the only place where we consume (remove) data from the receive/read/rx fliflo buffer.
         character_read = fliflo_buff_get(&SCC_READ[port]) & scc_bits_per_char_mask[port];
+        irq_on_next_rx_char[port] = 0; // WR0 command 4 asks for the next character only
         total_scc_received_chars++;
         if (total_scc_received_chars % 1000 == 0)
         {
@@ -1915,54 +1826,23 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
                 port, z8530_last_irq_status_bits);
 
       if (port)
-      {
-        // if software interrupt ack is on, it clears the IRQ on access to rr2.
-        if (scc_w[0].s.wr9.r.soft_int_ack)
-        {
-          scc_r[0].r[2] = 0;
-          z8530_last_irq_status_bits = 0;
-          scc_r[port].r[2] = 0;
-        }
-        return scc_w[0].s.wr2.v;
-      }
+        return scc_w[0].s.wr2.v; // channel A: the vector as written to WR2
       else
       {
-        /*
-
-        */
-        uint8 r2 = scc_r[port].r[2];
-
-        scc_r[0].r[2] = 0; /// 200608-8 <--- here here here here
-        DEBUG_LOG(0, "PORT B, will include status bits");
+        // Channel B: the vector with the status of the highest-priority
+        // pending interrupt -- in V3..V1, or in V4..V6 (reversed) with
+        // WR9 "status high".  It used to return the status of the
+        // PREVIOUS interrupt (stale), so the Lisa OS now and then ran the
+        // wrong handler.
+        uint8 v = scc_w[0].s.wr2.v;
+        int st = scc_rr2_status();
+        int b1 = st & 1, b2 = (st >> 1) & 1, b3 = (st >> 2) & 1;
         if (scc_w[0].s.wr9.r.status_hi_lo)
-        {
-          DEBUG_LOG(0, "HILO is HI - status bits in v4,5,6");
-          scc_r[0].s.rr2.r.v4 = (z8530_last_irq_status_bits & 8) ? 1 : 0;
-          scc_r[0].s.rr2.r.v5 = (z8530_last_irq_status_bits & 4) ? 1 : 0;
-          scc_r[0].s.rr2.r.v6 = (z8530_last_irq_status_bits & 2) ? 1 : 0;
-        }
+          v = (v & ~0x70) | (b3 << 4) | (b2 << 5) | (b1 << 6);
         else
-        {
-          DEBUG_LOG(0, "HILO is LO - status bits in v1,2,3");
-          scc_r[0].s.rr2.r.v1 = (z8530_last_irq_status_bits & 2) ? 1 : 0;
-          scc_r[0].s.rr2.r.v2 = (z8530_last_irq_status_bits & 4) ? 1 : 0;
-          scc_r[0].s.rr2.r.v3 = (z8530_last_irq_status_bits & 8) ? 1 : 0;
-        }
-        DEBUG_LOG(0, "Returning %02x from register %d on port %d",
-                  scc_r[port].r[2],
-                  2, port);
-
-        // if software interrupt ack is on, it clears the IRQ on access to rr2.
-        if (scc_w[0].s.wr9.r.soft_int_ack)
-        {
-          scc_r[0].r[2] = 0;
-          z8530_last_irq_status_bits = 0;
-          scc_r[port].r[2] = 0;
-        }
-
-        DEBUG_LOG(0, "before exit, z8530_last_irq_status_bits:%d rr2=%02x returning:%02x", z8530_last_irq_status_bits, scc_r[port].r[2], r2);
-
-        return r2;
+          v = (v & ~0x0e) | (b1 << 1) | (b2 << 2) | (b3 << 3);
+        // DEBUG_LOG(0, "RR2B: status %d, returning %02x", st, v);
+        return v;
       }
 
     case 7:
@@ -1975,11 +1855,8 @@ uint8 lisa_rb_Oxd200_sccz8530(uint32 address)
       /* FALLTHROUGH */
     case 3:
       DEBUG_LOG(0, "Read from register 3 irq pending");
-      {
-        uint8 ret = scc_r[port].r[3]; // IRQ pending.  These must be set by loop IRQ routine!
-        scc_r[port].r[3] = 0;
-        return ret;
-      }
+      // the pending (and enabled) interrupts; RR3 exists in channel A only
+      return port ? scc_rr3() : 0;
 
     case 8:
       DEBUG_LOG(0, "Read from register 8");
@@ -2255,73 +2132,6 @@ void set_stop_bits(unsigned int port, uint8 stopbits)
   return;
 } // 0=0 no stop bits,1=1 stop bit,2=1.5 stop bits,3=2 stop bits
 
-char read_serial_port_nothing(unsigned int port)
-{
-  UNUSED(port);
-  return 0;
-}
-char read_serial_port_imagewriter(unsigned int port)
-{
-  UNUSED(port);
-  return 0;
-}
-char read_serial_port_loopbackplug(unsigned int port)
-{
-  UNUSED(port);
-  return -1;
-} // this should never be called!
-char read_serial_port_localport(unsigned int port)
-{
-  if (port)
-  {
-    if (scc_a_port_F)
-      return fgetc(scc_a_port_F);
-    else
-      return 0;
-  }
-  else
-  {
-    if (scc_b_port_F)
-      return fgetc(scc_b_port_F);
-    else
-      return 0;
-  }
-  return 0;
-}
-
-char read_serial_port(unsigned int port) // generic handler
-{
-  ALERT_LOG(0, "r %p %p w %p %p", SCC_READ[0].buffer, &SCC_READ[1].buffer, SCC_WRITE[0].buffer, SCC_WRITE[1].buffer);
-  ALERT_LOG(0, "SRC:port:%d", port);
-  if (port)
-  {
-    if (serial_a == SCC_NOTHING)
-      return 0;
-    if (serial_a == SCC_IMAGEWRITER)
-      return 0;
-    if (serial_a == SCC_LOCALPORT)
-    {
-      if (scc_a_port_F)
-        return fgetc(scc_a_port_F);
-      else
-        return 0;
-    }
-  }
-  else
-  {
-    if (serial_b == SCC_NOTHING)
-      return 0;
-    if (serial_b == SCC_IMAGEWRITER)
-      return 0;
-    if (serial_b == SCC_LOCALPORT)
-    {
-      if (scc_b_port_F)
-        return fgetc(scc_b_port_F);
-    }
-  }
-  return 0;
-}
-
 void disconnect_serial(int port)
 {
   if (port != 0 && port != 1)
@@ -2341,7 +2151,6 @@ void disconnect_serial(int port)
     break;
   }
 
-  scc_fn[port].read_serial_port = NULL;
   scc_fn[port].write_serial_port = NULL;
   scc_fn[port].read_port_if_ready = NULL;
 

@@ -1075,17 +1075,6 @@ extern "C" void write_serial_port_terminal(int portnum, uint8 data)
     }
 }
 
-// interface function called by LisaEm main z8530 must be C call
-extern "C" char read_serial_port_terminal(int port)
-{
-    if (fliflo_buff_has_data(&SCC_READ[port]))
-    {
-        rx_char_available(port);
-        return (int)fliflo_buff_get(&SCC_READ[port]);
-    }
-    return -1;
-}
-
 extern "C" void close_terminalwx(int port)
 {
     if (port < 0 || port > 16)

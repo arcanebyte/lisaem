@@ -712,7 +712,6 @@ typedef struct
   void (*set_no_parity)(unsigned int port);
   void (*set_bits_per_char)(unsigned int port, uint8 bitsperchar);
   void (*set_stop_bits)(unsigned int port, uint8 stopbits);
-  char (*read_serial_port)(unsigned int port);
   void (*write_serial_port)(unsigned int port, char data);
   void (*read_port_if_ready)(unsigned int port);
   void (*scc_hardware_reset_port)(unsigned int port);

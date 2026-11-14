@@ -73,7 +73,7 @@
 static int fd[NUMSERPORTS];
 struct termios options;
 
-static char input[NUMSERPORTS][150]; // data buffer
+static unsigned char input[NUMSERPORTS][150]; // data buffer
 
 extern int verifybaud(int baud);
 
@@ -337,7 +337,8 @@ int poll_tty_serial_read(int port)
   return rc; // return (FD_ISSET(0, &fd_in));
 }
 
-char read_serial_port_tty(int port)
+// Invoked from z8530.c. Returns 0..255 or -1 (no data available).
+int read_serial_port_tty(int port)
 {
   int rc = 0;
 
@@ -351,6 +352,7 @@ char read_serial_port_tty(int port)
     }
     if (rc < 0)
       ALERT_LOG(0, "got rc %d error from poll on port %d", rc, port);
+      return -1;
   }
 
   return -1;
@@ -374,7 +376,7 @@ void close_tty(int port)
 #include <vars.h>
 // fake out fn
 
-char read_serial_port_tty(int port) { return 0; }
+int read_serial_port_tty(int port) { return 0; }
 void write_serial_port_tty(int port, uint8 data){};
 int poll_tty_serial_read(int port) { return 0; }
 
